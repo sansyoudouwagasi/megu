@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>めぐみ堂の女将さん ～ 和菓子お届け街道大作戦 ～</title>
+  <meta name="description" content="和菓子屋の女将さんが街道を駆け巡る！スマホ縦画面対応の爽快2Dスクロールアクションゲーム">
+  <link rel="stylesheet" href="css/style.css">
+  <!-- Google Fonts: Noto Serif JP & Zen Maru Gothic -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@600;900&family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <div id="app-container">
+    <div id="game-wrapper">
+      
+      <!-- メイン描画用Canvas -->
+      <canvas id="gameCanvas" width="450" height="800"></canvas>
+
+      <!-- ====================================================================
+           HUD (プレイ中ステータス表示)
+           ==================================================================== -->
+      <div id="game-hud" class="hidden">
+        <!-- 上部ヘッダーHUD -->
+        <div class="hud-header-group">
+          <div class="hud-top">
+            <div class="hud-stats">
+              <!-- ライフ表示 -->
+              <div class="hud-box">
+                <span class="hud-label">体力</span>
+                <div id="hud-lives-container" class="hud-lives">
+                  <span class="life-icon">🌸</span>
+                  <span class="life-icon">🌸</span>
+                  <span class="life-icon">🌸</span>
+                </div>
+              </div>
+              <!-- スコア表示 -->
+              <div class="hud-box">
+                <span class="hud-label">得点</span>
+                <span id="hud-score" class="hud-val">0</span>
+              </div>
+            </div>
+
+            <div class="hud-top-right">
+              <!-- 走行距離 -->
+              <div class="hud-box">
+                <span class="hud-label">宿場町</span>
+                <span id="hud-distance" class="hud-val">日本橋 0m</span>
+              </div>
+              <!-- サウンドON/OFF切替ボタン -->
+              <button id="hud-sound-toggle" class="hud-sound-btn" title="音量切替">🔊</button>
+            </div>
+          </div>
+
+          <!-- コンボ＆フィーバーゲージ -->
+          <div class="fever-bar-container">
+            <div class="fever-label">
+              <span id="hud-combo-text">連続和菓子: 0</span>
+              <span id="hud-fever-status">お茶会フィーバー</span>
+            </div>
+            <div class="fever-bar-bg">
+              <div id="hud-fever-fill" class="fever-bar-fill"></div>
+            </div>
+            <!-- 発動中パワーアップバッジ -->
+            <div id="hud-powerup-badges" class="powerup-badges"></div>
+          </div>
+        </div>
+
+        <!-- フィーバー突入バナー -->
+        <div id="fever-banner">
+          <div class="fever-text-sub">🌸 桜満開 🌸</div>
+          <div class="fever-text-main">お茶会フィーバー突入!!</div>
+        </div>
+
+        <!-- オンスクリーンコントローラー（スマホ用タッチ操作ボタン） -->
+        <div id="touch-controls">
+          <!-- 左右移動ボタン -->
+          <div class="touch-dpad">
+            <button id="btn-left" class="touch-btn" aria-label="左移動">
+              <span>◀</span>
+              <span class="touch-btn-label">左</span>
+            </button>
+            <button id="btn-right" class="touch-btn" aria-label="右移動">
+              <span>▶</span>
+              <span class="touch-btn-label">右</span>
+            </button>
+          </div>
+
+          <!-- ジャンプ＆和菓子シュートアクションボタン -->
+          <div class="touch-actions">
+            <button id="btn-shoot" class="touch-btn btn-shoot" aria-label="和菓子シュート">
+              <span>🍡</span>
+              <span class="touch-btn-label">投げる</span>
+            </button>
+            <button id="btn-jump" class="touch-btn btn-jump" aria-label="ジャンプ">
+              <span>▲</span>
+              <span class="touch-btn-label">跳ぶ</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====================================================================
+           タイトル画面
+           ==================================================================== -->
+      <div id="title-screen" class="screen-layer">
+        <div class="title-header">
+          <div class="title-sub">～ 老舗和菓子屋・街道大作戦 ～</div>
+          <h1 class="title-main">めぐみ堂の<br>女将さん</h1>
+          <div class="title-badge">🌸 爽快和風ラン＆アクション 🌸</div>
+        </div>
+
+        <div class="title-center-info">
+          <p>美味しい和菓子を集めてパワーアップ！<br>いたずらタヌキやカラスを満足させながら、東海道の宿場町へ和菓子を届けよう！</p>
+        </div>
+
+        <div class="title-footer">
+          <button id="btn-start" class="btn-wagashi">
+            <span>🍡</span> ゲーム開始
+          </button>
+          <div class="btn-group-row">
+            <button id="btn-open-zukan" class="btn-wagashi btn-sub">
+              <span>📖</span> 和菓子図鑑
+            </button>
+            <button id="btn-open-howtoplay" class="btn-wagashi btn-sub">
+              <span>❓</span> あそびかた
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====================================================================
+           結果画面（ゲームオーバー / 到達宿場町）
+           ==================================================================== -->
+      <div id="result-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+          <h2 id="result-title" class="modal-title">街道走破結果</h2>
+          
+          <div class="result-stat-grid">
+            <div class="stat-item">
+              <span class="stat-title">最終スコア</span>
+              <span id="res-score" class="stat-value">0</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-title">走破距離</span>
+              <span id="res-distance" class="stat-value">0m</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-title">お届け和菓子</span>
+              <span id="res-items" class="stat-value">0個</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-title">最高記録</span>
+              <span id="res-highscore" class="stat-value">0</span>
+            </div>
+          </div>
+
+          <div class="title-footer">
+            <button id="btn-retry" class="btn-wagashi">
+              <span>🔄</span> もう一度挑戦
+            </button>
+            <button id="btn-back-to-title" class="btn-wagashi btn-sub">
+              <span>🏠</span> タイトルへ戻る
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====================================================================
+           和菓子図鑑モーダル
+           ==================================================================== -->
+      <div id="zukan-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+          <h2 class="modal-title">🌸 名物和菓子図鑑 🌸</h2>
+          
+          <div class="zukan-list">
+            <div class="zukan-item">
+              <div class="zukan-icon-wrapper">🍡</div>
+              <div class="zukan-info">
+                <div class="zukan-name">三色団子【だんごダッシュ】</div>
+                <div class="zukan-desc">春の陽気を味わう団子。一定時間猛スピードで突進し、障害物を吹き飛ばす無敵状態に！</div>
+              </div>
+            </div>
+
+            <div class="zukan-item">
+              <div class="zukan-icon-wrapper">🍵</div>
+              <div class="zukan-info">
+                <div class="zukan-name">抹茶大福【お茶の加護】</div>
+                <div class="zukan-desc">濃厚な宇治抹茶の大福。体力を全回復し、ダメージを1回防ぐ桜のシールドを展開！</div>
+              </div>
+            </div>
+
+            <div class="zukan-item">
+              <div class="zukan-icon-wrapper">🥮</div>
+              <div class="zukan-info">
+                <div class="zukan-name">栗どら焼き【ふわふわ2段跳び】</div>
+                <div class="zukan-desc">大粒の栗が入ったどら焼き。ジャンプ力が上昇し、空中でもう一度跳べる2段ジャンプが可能に！</div>
+              </div>
+            </div>
+
+            <div class="zukan-item">
+              <div class="zukan-icon-wrapper">🌸</div>
+              <div class="zukan-info">
+                <div class="zukan-name">桜餅【和菓子シュート】</div>
+                <div class="zukan-desc">桜葉の香るお餅。前方に投げていたずらタヌキやカラスに渡すと、大満足してボーナス獲得！</div>
+              </div>
+            </div>
+
+            <div class="zukan-item">
+              <div class="zukan-icon-wrapper">🌟</div>
+              <div class="zukan-info">
+                <div class="zukan-name">金平糖【お茶会フィーバー】</div>
+                <div class="zukan-desc">キラキラ輝く砂糖菓子。連続で集めてゲージMAXになると、画面中の和菓子を吸い寄せるフィーバー発動！</div>
+              </div>
+            </div>
+          </div>
+
+          <button id="btn-close-zukan" class="btn-wagashi btn-sub">
+            とじる
+          </button>
+        </div>
+      </div>
+
+      <!-- ====================================================================
+           あそびかたモーダル
+           ==================================================================== -->
+      <div id="howtoplay-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+          <h2 class="modal-title">あそびかた</h2>
+          
+          <div class="guide-list">
+            <div class="guide-item">
+              <strong>📱 スマホの操作方法</strong>
+              画面下の「◀」「▶」で移動、「▲」でジャンプ、「🍡」で和菓子を投げます。画面タップでもジャンプできます。
+            </div>
+            <div class="guide-item">
+              <strong>💻 パソコンの操作方法</strong>
+              【← / →】または【A / D】: 左右移動<br>
+              【↑ / W / Space】: ジャンプ<br>
+              【Z / J / Enter】: 和菓子を投げる
+            </div>
+            <div class="guide-item">
+              <strong>✨ 攻略のコツ</strong>
+              ・和菓子を落とさず連続で集めてフィーバーを発動させよう！<br>
+              ・餅つきの大臼を見つけたら飛び乗って大ジャンプ！<br>
+              ・いたずらタヌキは和菓子を投げるか踏みつけて満足させよう！
+            </div>
+          </div>
+
+          <button id="btn-close-howtoplay" class="btn-wagashi btn-sub">
+            とじる
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- スクリプト読み込み -->
+  <script src="js/audio.js"></script>
+  <script src="js/sprites.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
