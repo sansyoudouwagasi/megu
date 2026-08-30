@@ -25,7 +25,8 @@ class Game {
     // カメラ＆街道設定 (プレイヤーのworldXにカメラが追従)
     this.cameraX = 0;
     this.lastGeneratedX = 0;
-    this.groundY = 670;
+    this.baseGroundY = 670; // 基準地面の高さ
+    this.groundY = 670;     // 後方互換用（敵生成などで参照）
 
     // プレイヤー定義
     this.player = {
@@ -58,6 +59,8 @@ class Game {
     this.projectiles = [];
     this.springs = [];
     this.effects = [];
+    this.terrainSegments = []; // 地形セグメント（地面の高低差）
+    this.walls = [];           // 壁型障害物（石垣・土塀）
 
     // 入力状態
     this.keys = {
@@ -190,7 +193,7 @@ class Game {
 
     // プレイヤー初期化
     this.player.worldX = 120;
-    this.player.y = this.groundY - this.player.height;
+    this.player.y = this.baseGroundY - this.player.height;
     this.player.vx = 0;
     this.player.vy = 0;
     this.player.isGrounded = true;
@@ -207,6 +210,8 @@ class Game {
 
     this.cameraX = 0;
     this.lastGeneratedX = 350;
+    this.lastTerrainEndX = 0;
+    this.currentTerrainY = this.baseGroundY;
 
     // 配列初期化
     this.platforms = [];
@@ -215,6 +220,18 @@ class Game {
     this.projectiles = [];
     this.springs = [];
     this.effects = [];
+    this.terrainSegments = [];
+    this.walls = [];
+
+    // 初期の平坦な地面セグメント
+    this.terrainSegments.push({
+      x: 0,
+      width: 600,
+      y: this.baseGroundY,
+      type: 'flat'
+    });
+    this.lastTerrainEndX = 600;
+    this.currentTerrainY = this.baseGroundY;
 
     // 初期街道生成
     this.generateStageAhead(1600);
@@ -223,9 +240,263 @@ class Game {
   }
 
   // =========================================================================
+  // 地面の高さ取得（terrainSegmentsから該当するセグメントを検索）
+  // =========================================================================
+  getGroundYAt(worldX) {
+    // 該当する地形セグメントを後方から検索（最新のものが優先）
+    for (let i = this.terrainSegments.length - 1; i >= 0; i--) {
+      const seg = this.terrainSegments[i];
+      if (worldX >= seg.x && worldX < seg.x + seg.width) {
+        if (seg.type === 'gap') {
+          return null; // 穴 — 地面なし
+        }
+        if (seg.type === 'slope_up') {
+          // 上り坂: 左端がseg.yFrom、右端がseg.yTo
+          const t = (worldX - seg.x) / seg.width;
+          return seg.yFrom + (seg.yTo - seg.yFrom) * t;
+        }
+        if (seg.type === 'slope_down') {
+          const t = (worldX - seg.x) / seg.width;
+          return seg.yFrom + (seg.yTo - seg.yFrom) * t;
+        }
+        return seg.y; // 'flat', 'raised', 'lowered'
+      }
+    }
+    return this.baseGroundY; // デフォルト
+  }
+
+  // =========================================================================
+  // 地形の前方生成（コースに高低差を付ける）
+  // =========================================================================
+  generateTerrainAhead(targetX) {
+    while (this.lastTerrainEndX < targetX) {
+      const roll = Math.random();
+      const prevY = this.currentTerrainY;
+      // 距離に応じて難易度UP: 距離が進むほど穴や高低差が出やすくなる
+      const difficulty = Math.min(1.0, this.distance / 500);
+
+      if (roll < 0.10 + difficulty * 0.08) {
+        // ===== 穴（ギャップ）: ジャンプで飛び越える =====
+        const gapWidth = 80 + Math.random() * 60 + difficulty * 30;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: gapWidth,
+          y: prevY,
+          type: 'gap'
+        });
+        // 穴の上に金平糖を誘導配置
+        this.items.push({
+          x: this.lastTerrainEndX + gapWidth / 2 - 16,
+          y: prevY - 120,
+          width: 32,
+          height: 32,
+          type: 'konpeito'
+        });
+        this.lastTerrainEndX += gapWidth;
+        // 穴の先は平坦な着地帯
+        const landingW = 200 + Math.random() * 150;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: landingW,
+          y: prevY,
+          type: 'flat'
+        });
+        this.lastTerrainEndX += landingW;
+
+      } else if (roll < 0.22 + difficulty * 0.06) {
+        // ===== 上り坂 → 高台 =====
+        const riseAmount = 50 + Math.random() * 60;
+        const slopeW = 120 + Math.random() * 80;
+        const newY = Math.max(480, prevY - riseAmount); // 画面上限制限
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: slopeW,
+          yFrom: prevY,
+          yTo: newY,
+          y: newY,
+          type: 'slope_up'
+        });
+        this.lastTerrainEndX += slopeW;
+        // 高台の平坦部分
+        const flatW = 250 + Math.random() * 200;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: flatW,
+          y: newY,
+          type: 'raised'
+        });
+        this.lastTerrainEndX += flatW;
+        this.currentTerrainY = newY;
+
+      } else if (roll < 0.34 + difficulty * 0.04) {
+        // ===== 下り坂 → 谷 =====
+        const dropAmount = 40 + Math.random() * 50;
+        const slopeW = 100 + Math.random() * 80;
+        const newY = Math.min(this.baseGroundY, prevY + dropAmount);
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: slopeW,
+          yFrom: prevY,
+          yTo: newY,
+          y: newY,
+          type: 'slope_down'
+        });
+        this.lastTerrainEndX += slopeW;
+        const flatW = 200 + Math.random() * 150;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: flatW,
+          y: newY,
+          type: 'lowered'
+        });
+        this.lastTerrainEndX += flatW;
+        this.currentTerrainY = newY;
+
+      } else if (roll < 0.42 + difficulty * 0.05) {
+        // ===== 階段状の段差（3段の上り階段） =====
+        const stepW = 90;
+        const stepH = 35;
+        let stepY = prevY;
+        for (let s = 0; s < 3; s++) {
+          stepY -= stepH;
+          this.terrainSegments.push({
+            x: this.lastTerrainEndX,
+            width: stepW,
+            y: stepY,
+            type: 'raised'
+          });
+          // 各段に金平糖を時々配置
+          if (Math.random() < 0.4) {
+            this.items.push({
+              x: this.lastTerrainEndX + stepW / 2 - 16,
+              y: stepY - 42,
+              width: 32,
+              height: 32,
+              type: 'konpeito'
+            });
+          }
+          this.lastTerrainEndX += stepW;
+        }
+        // 階段の頂上の平坦部分
+        const topW = 180 + Math.random() * 120;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: topW,
+          y: stepY,
+          type: 'raised'
+        });
+        this.lastTerrainEndX += topW;
+        this.currentTerrainY = stepY;
+
+      } else if (roll < 0.50 + difficulty * 0.04) {
+        // ===== 地面に石垣の壁（ジャンプで越える） =====
+        const wallH = 70 + Math.random() * 40;
+        this.walls.push({
+          x: this.lastTerrainEndX + 50,
+          y: prevY - wallH,
+          width: 30,
+          height: wallH
+        });
+        // 壁の先の平坦地面
+        const segW = 350 + Math.random() * 200;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: segW,
+          y: prevY,
+          type: 'flat'
+        });
+        this.lastTerrainEndX += segW;
+
+      } else if (roll < 0.56 + difficulty * 0.05) {
+        // ===== 高台→穴→高台（浮島風） =====
+        const riseH = 60 + Math.random() * 40;
+        const newY = Math.max(500, prevY - riseH);
+        // 上り坂
+        const slopeW = 80;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: slopeW,
+          yFrom: prevY,
+          yTo: newY,
+          y: newY,
+          type: 'slope_up'
+        });
+        this.lastTerrainEndX += slopeW;
+        // 高台部分
+        const platW = 120 + Math.random() * 80;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: platW,
+          y: newY,
+          type: 'raised'
+        });
+        this.lastTerrainEndX += platW;
+        // 穴
+        const gapW = 100 + Math.random() * 50;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: gapW,
+          y: newY,
+          type: 'gap'
+        });
+        // 穴の向こう側に着地プラットフォーム
+        this.platforms.push({
+          x: this.lastTerrainEndX + gapW,
+          y: newY,
+          width: 120,
+          height: 18
+        });
+        this.lastTerrainEndX += gapW;
+        // 下り坂で基準に戻る
+        const downW = 80;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX + 120,
+          width: downW,
+          yFrom: newY,
+          yTo: this.baseGroundY,
+          y: this.baseGroundY,
+          type: 'slope_down'
+        });
+        this.lastTerrainEndX += 120 + downW;
+        this.currentTerrainY = this.baseGroundY;
+
+      } else {
+        // ===== 通常の平坦地面（基準Yに戻す傾向あり） =====
+        // 高すぎたら下り坂で基準Yに向かう
+        if (prevY < this.baseGroundY - 40) {
+          const slopeW = 100 + Math.random() * 60;
+          const returnY = prevY + 40 + Math.random() * 30;
+          const newY = Math.min(this.baseGroundY, returnY);
+          this.terrainSegments.push({
+            x: this.lastTerrainEndX,
+            width: slopeW,
+            yFrom: prevY,
+            yTo: newY,
+            y: newY,
+            type: 'slope_down'
+          });
+          this.lastTerrainEndX += slopeW;
+          this.currentTerrainY = newY;
+        }
+        const flatW = 300 + Math.random() * 250;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: flatW,
+          y: this.currentTerrainY,
+          type: 'flat'
+        });
+        this.lastTerrainEndX += flatW;
+      }
+    }
+  }
+
+  // =========================================================================
   // 街道・ステージの前方生成（アイテム出現率を適正に抑えたバランス調整）
   // =========================================================================
   generateStageAhead(targetX) {
+    // まず地形を先行生成
+    this.generateTerrainAhead(targetX + 400);
+
     const rareWagashi = ['dango', 'daifuku', 'dorayaki', 'sakuramochi'];
 
     while (this.lastGeneratedX < targetX) {
@@ -233,12 +504,13 @@ class Game {
       const sectionDist = 380 + Math.random() * 200;
       this.lastGeneratedX += sectionDist;
       const x = this.lastGeneratedX;
+      const localGroundY = this.getGroundYAt(x) || this.baseGroundY;
       const pattern = Math.random();
 
-      if (pattern < 0.32) {
+      if (pattern < 0.28) {
         // パターン1: 高台の瓦屋根 + 敵（タヌキ）+ 屋根の上に貴重な和菓子1個
         const platW = 140 + Math.random() * 60;
-        const platY = this.groundY - (110 + Math.random() * 50);
+        const platY = localGroundY - (110 + Math.random() * 50);
         this.platforms.push({
           x: x,
           y: platY,
@@ -258,9 +530,10 @@ class Game {
         }
 
         // 地上にいたずらタヌキ（地上を巡回）
+        const tanukiGroundY = this.getGroundYAt(x + platW + 80) || localGroundY;
         this.enemies.push({
           x: x + platW + 40,
-          y: this.groundY - 55,
+          y: tanukiGroundY - 55,
           width: 52,
           height: 52,
           minX: x + platW,
@@ -269,11 +542,12 @@ class Game {
           type: 'tanuki',
           isSatisfied: false
         });
-      } else if (pattern < 0.60) {
+      } else if (pattern < 0.50) {
         // パターン2: 転がる酒樽障害物 + 金平糖1〜2個
+        const barrelGroundY = this.getGroundYAt(x + 100) || localGroundY;
         this.enemies.push({
           x: x + 100,
-          y: this.groundY - 46,
+          y: barrelGroundY - 46,
           width: 46,
           height: 46,
           vx: -2.4,
@@ -286,18 +560,18 @@ class Game {
         if (Math.random() < 0.5) {
           this.items.push({
             x: x + 20,
-            y: this.groundY - 45,
+            y: localGroundY - 45,
             width: 32,
             height: 32,
             type: 'konpeito'
           });
         }
-      } else if (pattern < 0.82) {
+      } else if (pattern < 0.70) {
         // パターン3: 急降下カラス + 空中に金平糖
         this.enemies.push({
           x: x + 120,
-          y: this.groundY - 170,
-          baseY: this.groundY - 170,
+          y: localGroundY - 170,
+          baseY: localGroundY - 170,
           width: 50,
           height: 44,
           vx: -1.8,
@@ -309,17 +583,52 @@ class Game {
         if (Math.random() < 0.45) {
           this.items.push({
             x: x + 40,
-            y: this.groundY - 120,
+            y: localGroundY - 120,
             width: 34,
             height: 34,
             type: Math.random() < 0.3 ? rareWagashi[Math.floor(Math.random() * rareWagashi.length)] : 'konpeito'
           });
         }
+      } else if (pattern < 0.82) {
+        // パターン4: 壁＋タヌキ の複合（壁を超えるとタヌキが待っている）
+        const wallH = 65 + Math.random() * 35;
+        this.walls.push({
+          x: x,
+          y: localGroundY - wallH,
+          width: 28,
+          height: wallH
+        });
+        // 壁の向こう側にタヌキ
+        const tanukiX = x + 60;
+        const tanukiGroundY = this.getGroundYAt(tanukiX) || localGroundY;
+        if (tanukiGroundY !== null) {
+          this.enemies.push({
+            x: tanukiX,
+            y: tanukiGroundY - 55,
+            width: 52,
+            height: 52,
+            minX: tanukiX - 40,
+            maxX: tanukiX + 80,
+            vx: -0.8,
+            type: 'tanuki',
+            isSatisfied: false
+          });
+        }
+        // 壁の上に和菓子
+        if (Math.random() < 0.5) {
+          this.items.push({
+            x: x - 4,
+            y: localGroundY - wallH - 42,
+            width: 36,
+            height: 36,
+            type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)]
+          });
+        }
       } else {
-        // パターン4: 餅つきの大臼（トランポリン） + 高空の和菓子
+        // パターン5: 餅つきの大臼（トランポリン） + 高空の和菓子
         this.springs.push({
           x: x,
-          y: this.groundY - 36,
+          y: localGroundY - 36,
           width: 52,
           height: 36
         });
@@ -327,7 +636,7 @@ class Game {
         // 大臼で跳んだ高空に貴重な和菓子
         this.items.push({
           x: x + 8,
-          y: this.groundY - 210,
+          y: localGroundY - 210,
           width: 40,
           height: 40,
           type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)]
@@ -531,13 +840,64 @@ class Game {
     this.player.vy += 0.68;
     this.player.y += this.player.vy;
 
-    // 地面判定
-    if (this.player.y >= this.groundY - this.player.height) {
-      this.player.y = this.groundY - this.player.height;
-      this.player.vy = 0;
-      this.player.isGrounded = true;
-      this.player.canDoubleJump = this.player.hasDoubleJump;
+    // 地面判定（地形セグメントベース）
+    const playerCenterX = this.player.worldX + this.player.width / 2;
+    const localGround = this.getGroundYAt(playerCenterX);
+
+    if (localGround === null) {
+      // 穴の上: 地面なし → 落下し続ける
+      // 画面外まで落下したらダメージ＆復帰
+      if (this.player.y > this.baseGroundY + 100) {
+        this.takeDamage();
+        // 最後に安全だった地面に復帰
+        const safeX = this.player.worldX - 150;
+        const safeGround = this.getGroundYAt(safeX) || this.baseGroundY;
+        this.player.worldX = safeX;
+        this.player.y = safeGround - this.player.height - 20;
+        this.player.vy = 0;
+        this.player.vx = 0;
+        this.player.isGrounded = false;
+      }
+    } else {
+      // 通常の地面判定
+      if (this.player.y >= localGround - this.player.height) {
+        this.player.y = localGround - this.player.height;
+        this.player.vy = 0;
+        this.player.isGrounded = true;
+        this.player.canDoubleJump = this.player.hasDoubleJump;
+      }
     }
+
+    // 壁との衝突判定（横方向の当たり判定）
+    this.walls.forEach(wall => {
+      const pLeft = this.player.worldX + 8;
+      const pRight = this.player.worldX + this.player.width - 8;
+      const pTop = this.player.y + 10;
+      const pBottom = this.player.y + this.player.height;
+
+      if (
+        pRight > wall.x &&
+        pLeft < wall.x + wall.width &&
+        pBottom > wall.y &&
+        pTop < wall.y + wall.height
+      ) {
+        // 上から乗っている場合 → 足場として着地
+        if (this.player.vy >= 0 && pBottom <= wall.y + 20) {
+          this.player.y = wall.y - this.player.height;
+          this.player.vy = 0;
+          this.player.isGrounded = true;
+          this.player.canDoubleJump = this.player.hasDoubleJump;
+        } else {
+          // 横からぶつかった → 押し戻す
+          if (this.player.vx > 0) {
+            this.player.worldX = wall.x - this.player.width + 8;
+          } else if (this.player.vx < 0) {
+            this.player.worldX = wall.x + wall.width - 8;
+          }
+          this.player.vx = 0;
+        }
+      }
+    });
 
     // 足場（プラットフォーム）着地判定
     this.platforms.forEach(plat => {
@@ -723,6 +1083,8 @@ class Game {
     this.items = this.items.filter(i => i.x > this.cameraX - 400);
     this.enemies = this.enemies.filter(e => e.x > this.cameraX - 400 && (!e.isSatisfied || Date.now() - e.satisfiedTime < 800));
     this.springs = this.springs.filter(s => s.x > this.cameraX - 400);
+    this.terrainSegments = this.terrainSegments.filter(t => t.x + t.width > this.cameraX - 600);
+    this.walls = this.walls.filter(w => w.x > this.cameraX - 400);
 
     // エフェクト更新
     this.effects.forEach((eff, idx) => {
@@ -756,7 +1118,124 @@ class Game {
     // 1. 背景パララックス描画（カメラ位置に応じてスクロール）
     spriteManager.renderBackground(this.ctx, this.cameraX, this.width, this.height, this.isFever);
 
-    // 2. 足場（屋根・高台）
+    // 2. 地形セグメント（地面の高低差）描画
+    this.terrainSegments.forEach(seg => {
+      if (seg.type === 'gap') return; // 穴は描画しない
+      const sX = seg.x - this.cameraX;
+      if (sX > this.width + 50 || sX + seg.width < -50) return; // 画面外スキップ
+
+      this.ctx.save();
+
+      if (seg.type === 'slope_up' || seg.type === 'slope_down') {
+        // 坂道の描画
+        const topLeftY = seg.yFrom;
+        const topRightY = seg.yTo;
+        // 地面の表面
+        this.ctx.fillStyle = '#8B7355';
+        this.ctx.beginPath();
+        this.ctx.moveTo(sX, topLeftY);
+        this.ctx.lineTo(sX + seg.width, topRightY);
+        this.ctx.lineTo(sX + seg.width, this.height);
+        this.ctx.lineTo(sX, this.height);
+        this.ctx.closePath();
+        this.ctx.fill();
+
+        // 土の層
+        this.ctx.fillStyle = '#6B4E2E';
+        this.ctx.beginPath();
+        this.ctx.moveTo(sX, topLeftY + 12);
+        this.ctx.lineTo(sX + seg.width, topRightY + 12);
+        this.ctx.lineTo(sX + seg.width, this.height);
+        this.ctx.lineTo(sX, this.height);
+        this.ctx.closePath();
+        this.ctx.fill();
+
+        // 草の線
+        this.ctx.strokeStyle = '#5A7A3A';
+        this.ctx.lineWidth = 3;
+        this.ctx.beginPath();
+        this.ctx.moveTo(sX, topLeftY);
+        this.ctx.lineTo(sX + seg.width, topRightY);
+        this.ctx.stroke();
+      } else {
+        // 平坦・高台・低地の描画
+        const topY = seg.y;
+
+        // 地面の表面（土色の層）
+        this.ctx.fillStyle = '#8B7355';
+        this.ctx.fillRect(sX, topY, seg.width, 12);
+
+        // 土の層
+        this.ctx.fillStyle = '#6B4E2E';
+        this.ctx.fillRect(sX, topY + 12, seg.width, this.height - topY - 12);
+
+        // 段差がある場合の側面を描画
+        if (seg.type === 'raised') {
+          this.ctx.fillStyle = '#5A4128';
+          this.ctx.fillRect(sX, topY, 3, this.height - topY);
+        }
+
+        // 草の線
+        this.ctx.strokeStyle = '#5A7A3A';
+        this.ctx.lineWidth = 3;
+        this.ctx.beginPath();
+        this.ctx.moveTo(sX, topY);
+        this.ctx.lineTo(sX + seg.width, topY);
+        this.ctx.stroke();
+
+        // 地面の装飾（小石・草のディテール）
+        this.ctx.fillStyle = '#A89070';
+        for (let dx = 20; dx < seg.width - 10; dx += 60 + Math.sin(seg.x + dx) * 20) {
+          const stoneX = sX + dx;
+          if (stoneX > -10 && stoneX < this.width + 10) {
+            this.ctx.beginPath();
+            this.ctx.ellipse(stoneX, topY + 6, 4, 2, 0, 0, Math.PI * 2);
+            this.ctx.fill();
+          }
+        }
+      }
+      this.ctx.restore();
+    });
+
+    // 2b. 壁型障害物（石垣）の描画
+    this.walls.forEach(wall => {
+      const wX = wall.x - this.cameraX;
+      if (wX > this.width + 30 || wX + wall.width < -30) return;
+
+      this.ctx.save();
+      // 石垣のベース
+      this.ctx.fillStyle = '#7A6C5D';
+      this.ctx.fillRect(wX, wall.y, wall.width, wall.height);
+
+      // 石積み模様
+      this.ctx.strokeStyle = '#5A4A3A';
+      this.ctx.lineWidth = 1;
+      const blockH = 14;
+      for (let row = 0; row < Math.ceil(wall.height / blockH); row++) {
+        const y = wall.y + row * blockH;
+        this.ctx.beginPath();
+        this.ctx.moveTo(wX, y);
+        this.ctx.lineTo(wX + wall.width, y);
+        this.ctx.stroke();
+        // 互い違いの縦線
+        const offset = (row % 2 === 0) ? wall.width * 0.5 : wall.width * 0.3;
+        this.ctx.beginPath();
+        this.ctx.moveTo(wX + offset, y);
+        this.ctx.lineTo(wX + offset, y + blockH);
+        this.ctx.stroke();
+      }
+
+      // 上端の装飾（瓦風）
+      this.ctx.fillStyle = '#4A3F35';
+      this.ctx.fillRect(wX - 3, wall.y - 4, wall.width + 6, 6);
+      this.ctx.strokeStyle = '#E5A93B';
+      this.ctx.lineWidth = 1;
+      this.ctx.strokeRect(wX - 3, wall.y - 4, wall.width + 6, 6);
+
+      this.ctx.restore();
+    });
+
+    // 3. 足場（屋根・高台）
     this.platforms.forEach(plat => {
       const pX = plat.x - this.cameraX;
       this.ctx.save();
@@ -775,7 +1254,7 @@ class Game {
       this.ctx.restore();
     });
 
-    // 3. 大臼（トランポリン）
+    // 4. 大臼（トランポリン）
     this.springs.forEach(s => {
       spriteManager.renderSpring(this.ctx, {
         x: s.x - this.cameraX,
@@ -785,7 +1264,7 @@ class Game {
       });
     });
 
-    // 4. 和菓子アイテム
+    // 5. 和菓子アイテム
     this.items.forEach(item => {
       spriteManager.renderItem(this.ctx, {
         x: item.x - this.cameraX,
@@ -796,7 +1275,7 @@ class Game {
       });
     });
 
-    // 5. 投擲弾
+    // 6. 投擲弾
     this.projectiles.forEach(proj => {
       spriteManager.renderProjectile(this.ctx, {
         x: proj.x - this.cameraX,
@@ -806,7 +1285,7 @@ class Game {
       });
     });
 
-    // 6. 敵キャラクター
+    // 7. 敵キャラクター
     this.enemies.forEach(enemy => {
       spriteManager.renderEnemy(this.ctx, {
         x: enemy.x - this.cameraX,
@@ -821,7 +1300,7 @@ class Game {
       });
     });
 
-    // 7. 女将さん（プレイヤー）
+    // 8. 女将さん（プレイヤー）
     spriteManager.renderPlayer(this.ctx, {
       x: this.player.worldX - this.cameraX,
       y: this.player.y,
@@ -836,11 +1315,11 @@ class Game {
       vy: this.player.vy
     });
 
-    // 8. 桜の花びらパーティクル（風になびく速度はプレイヤーの移動速度にも連動）
+    // 9. 桜の花びらパーティクル（風になびく速度はプレイヤーの移動速度にも連動）
     const petalSpeed = (this.isFever ? 2.5 : 1.0) + Math.abs(this.player.vx) * 0.15;
     spriteManager.renderPetals(this.ctx, this.width, this.height, petalSpeed);
 
-    // 9. フローティングテキスト
+    // 10. フローティングテキスト
     this.effects.forEach(eff => {
       if (eff.type === 'text') {
         const screenX = eff.worldX - this.cameraX;
