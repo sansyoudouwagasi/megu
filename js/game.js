@@ -530,31 +530,37 @@ class Game {
         }
 
         // 地上にいたずらタヌキ（地上を巡回）
-        const tanukiGroundY = this.getGroundYAt(x + platW + 80) || localGroundY;
-        this.enemies.push({
-          x: x + platW + 40,
-          y: tanukiGroundY - 55,
-          width: 52,
-          height: 52,
-          minX: x + platW,
-          maxX: x + platW + 120,
-          vx: -0.8,
-          type: 'tanuki',
-          isSatisfied: false
-        });
+        const tanukiX = x + platW + 40;
+        const tanukiGroundY = this.getGroundYAt(tanukiX + 26);
+        if (tanukiGroundY !== null) {
+          this.enemies.push({
+            x: tanukiX,
+            y: tanukiGroundY - 52,
+            width: 52,
+            height: 52,
+            minX: x + platW,
+            maxX: x + platW + 140,
+            vx: -0.8,
+            type: 'tanuki',
+            isSatisfied: false
+          });
+        }
       } else if (pattern < 0.50) {
         // パターン2: 転がる酒樽障害物 + 金平糖1〜2個
-        const barrelGroundY = this.getGroundYAt(x + 100) || localGroundY;
-        this.enemies.push({
-          x: x + 100,
-          y: barrelGroundY - 46,
-          width: 46,
-          height: 46,
-          vx: -2.4,
-          type: 'barrel',
-          rotation: 0,
-          isSatisfied: false
-        });
+        const barrelX = x + 100;
+        const barrelGroundY = this.getGroundYAt(barrelX + 23) || localGroundY;
+        if (barrelGroundY !== null) {
+          this.enemies.push({
+            x: barrelX,
+            y: barrelGroundY - 46,
+            width: 46,
+            height: 46,
+            vx: -2.4,
+            type: 'barrel',
+            rotation: 0,
+            isSatisfied: false
+          });
+        }
 
         // 控えめに金平糖を1個配置
         if (Math.random() < 0.5) {
@@ -568,10 +574,11 @@ class Game {
         }
       } else if (pattern < 0.70) {
         // パターン3: 急降下カラス + 空中に金平糖
+        const crowGroundY = this.getGroundYAt(x + 120 + 25) || localGroundY;
         this.enemies.push({
           x: x + 120,
-          y: localGroundY - 170,
-          baseY: localGroundY - 170,
+          y: crowGroundY - 170,
+          baseY: crowGroundY - 170,
           width: 50,
           height: 44,
           vx: -1.8,
@@ -600,11 +607,11 @@ class Game {
         });
         // 壁の向こう側にタヌキ
         const tanukiX = x + 60;
-        const tanukiGroundY = this.getGroundYAt(tanukiX) || localGroundY;
+        const tanukiGroundY = this.getGroundYAt(tanukiX + 26) || localGroundY;
         if (tanukiGroundY !== null) {
           this.enemies.push({
             x: tanukiX,
-            y: tanukiGroundY - 55,
+            y: tanukiGroundY - 52,
             width: 52,
             height: 52,
             minX: tanukiX - 40,
@@ -1021,21 +1028,98 @@ class Game {
 
     // 敵キャラクター更新＆精密な当たり判定
     this.enemies.forEach((enemy) => {
-      // 敵の固有動作
+      // 満足（浄化済み）の場合は退場アニメーション中なので通常移動・接地物理はスキップ
+      if (enemy.isSatisfied) return;
+
+      // 敵の固有動作と地形・高低差追従
       if (enemy.type === 'tanuki') {
-        enemy.x += enemy.vx;
+        const nextX = enemy.x + enemy.vx;
+        const frontX = nextX + (enemy.vx > 0 ? enemy.width + 10 : -10);
+        const centerNextX = nextX + enemy.width / 2;
+        const frontGroundY = this.getGroundYAt(frontX);
+        const nextGroundY = this.getGroundYAt(centerNextX);
+        const currentGroundY = this.getGroundYAt(enemy.x + enemy.width / 2);
+
+        // パトロール反転条件:
+        let shouldTurn = false;
+
+        // 1. 指定された巡回範囲外
         if (enemy.minX && enemy.maxX) {
-          if (enemy.x < enemy.minX || enemy.x > enemy.maxX) {
-            enemy.vx = -enemy.vx;
+          if (nextX < enemy.minX || nextX > enemy.maxX) {
+            shouldTurn = true;
           }
         }
+        // 2. 前方が穴（崖）の場合、落ちないように反転（すでに穴に落ちている場合を除く）
+        if (currentGroundY !== null && (frontGroundY === null || nextGroundY === null)) {
+          shouldTurn = true;
+        }
+        // 3. 前方に高すぎる段差（登れない崖）がある場合反転
+        if (frontGroundY !== null && currentGroundY !== null && (currentGroundY - frontGroundY > 40)) {
+          shouldTurn = true;
+        }
+        // 4. 壁（石垣）に衝突した場合反転
+        this.walls.forEach(wall => {
+          if (
+            nextX + enemy.width > wall.x &&
+            nextX < wall.x + wall.width &&
+            enemy.y + enemy.height > wall.y &&
+            enemy.y < wall.y + wall.height
+          ) {
+            shouldTurn = true;
+          }
+        });
+
+        if (shouldTurn) {
+          enemy.vx = -enemy.vx;
+          enemy.x += enemy.vx;
+        } else {
+          enemy.x = nextX;
+        }
+
+        // 接地・高度更新
+        const finalGroundY = this.getGroundYAt(enemy.x + enemy.width / 2);
+        if (finalGroundY !== null) {
+          enemy.y = finalGroundY - enemy.height;
+          enemy.vy = 0;
+        } else {
+          // 足元が穴の場合は落下
+          enemy.vy = (enemy.vy || 0) + 0.6;
+          enemy.y += enemy.vy;
+        }
+
       } else if (enemy.type === 'barrel') {
         enemy.x += enemy.vx;
-        enemy.rotation = (enemy.rotation || 0) + 0.14;
+        const centerX = enemy.x + enemy.width / 2;
+        const groundY = this.getGroundYAt(centerX);
+
+        if (groundY !== null) {
+          // 地面に接地して転がる
+          enemy.y = groundY - enemy.height;
+          enemy.vy = 0;
+          // 移動速度に同期した自然な回転（左進行なので反時計回り）
+          enemy.rotation = (enemy.rotation || 0) + (enemy.vx / (enemy.width / 2));
+        } else {
+          // 穴の上に来たら重力で落下！
+          enemy.vy = (enemy.vy || 0) + 0.65;
+          enemy.y += enemy.vy;
+          enemy.rotation = (enemy.rotation || 0) - 0.15;
+        }
+
       } else if (enemy.type === 'crow') {
         enemy.x += enemy.vx;
+        const centerX = enemy.x + enemy.width / 2;
+        const currentGroundY = this.getGroundYAt(centerX) || this.baseGroundY;
+
+        // カラスの基準飛行高度をコースの起伏（高台や谷）に合わせてスムーズに追従
+        const targetBaseY = currentGroundY - 170;
+        if (enemy.baseY === undefined) {
+          enemy.baseY = targetBaseY;
+        } else {
+          enemy.baseY += (targetBaseY - enemy.baseY) * 0.08;
+        }
+
         enemy.animPhase = (enemy.animPhase || 0) + 0.05;
-        enemy.y = (enemy.baseY || 450) + Math.sin(enemy.animPhase) * 35;
+        enemy.y = enemy.baseY + Math.sin(enemy.animPhase) * 35;
       }
 
       if (!enemy.isSatisfied) {
@@ -1081,7 +1165,7 @@ class Game {
     // ガベージコレクション
     this.platforms = this.platforms.filter(p => p.x > this.cameraX - 400);
     this.items = this.items.filter(i => i.x > this.cameraX - 400);
-    this.enemies = this.enemies.filter(e => e.x > this.cameraX - 400 && (!e.isSatisfied || Date.now() - e.satisfiedTime < 800));
+    this.enemies = this.enemies.filter(e => e.x > this.cameraX - 400 && e.y < this.height + 150 && (!e.isSatisfied || Date.now() - e.satisfiedTime < 800));
     this.springs = this.springs.filter(s => s.x > this.cameraX - 400);
     this.terrainSegments = this.terrainSegments.filter(t => t.x + t.width > this.cameraX - 600);
     this.walls = this.walls.filter(w => w.x > this.cameraX - 400);
