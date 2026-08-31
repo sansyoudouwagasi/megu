@@ -1322,20 +1322,13 @@ class Game {
     // 3. 足場（屋根・高台）
     this.platforms.forEach(plat => {
       const pX = plat.x - this.cameraX;
-      this.ctx.save();
-      this.ctx.fillStyle = '#4a3f35';
-      this.ctx.beginPath();
-      this.ctx.roundRect(pX, plat.y, plat.width, plat.height, 4);
-      this.ctx.fill();
-      this.ctx.strokeStyle = '#e5a93b';
-      this.ctx.lineWidth = 2;
-      this.ctx.stroke();
-      this.ctx.strokeStyle = '#2b231d';
-      this.ctx.beginPath();
-      this.ctx.moveTo(pX, plat.y + 4);
-      this.ctx.lineTo(pX + plat.width, plat.y + 4);
-      this.ctx.stroke();
-      this.ctx.restore();
+      if (pX > this.width + 100 || pX + plat.width < -100) return;
+      spriteManager.renderPlatform(this.ctx, {
+        x: pX,
+        y: plat.y,
+        width: plat.width,
+        height: plat.height
+      });
     });
 
     // 4. 大臼（トランポリン）

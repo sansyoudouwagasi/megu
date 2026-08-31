@@ -367,6 +367,203 @@ class SpriteManager {
   }
 
   // =========================================================================
+  // 足場（江戸宿場町・町家瓦屋根庇）描画
+  // =========================================================================
+  renderPlatform(ctx, plat) {
+    const { x, y, width, height } = plat;
+    if (width <= 0 || height <= 0) return;
+
+    ctx.save();
+
+    // 0. ドロップシャドウ（足場下の陰影）
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 4;
+
+    // 1. 木組みの持ち送り（両端下部の斜め支え梁）
+    const bracketW = 14;
+    const bracketH = 16;
+    ctx.fillStyle = '#3e2718';
+    ctx.strokeStyle = '#23150c';
+    ctx.lineWidth = 1;
+
+    // 左側持ち送り
+    ctx.beginPath();
+    ctx.moveTo(x + 10, y + height);
+    ctx.lineTo(x + 10 + bracketW, y + height);
+    ctx.lineTo(x + 6, y + height + bracketH);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // 右側持ち送り
+    ctx.beginPath();
+    ctx.moveTo(x + width - 10, y + height);
+    ctx.lineTo(x + width - 10 - bracketW, y + height);
+    ctx.lineTo(x + width - 6, y + height + bracketH);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // 持ち送りの飾り鋲（金）
+    ctx.fillStyle = '#e5a93b';
+    ctx.beginPath();
+    ctx.arc(x + 10, y + height + 6, 2, 0, Math.PI * 2);
+    ctx.arc(x + width - 10, y + height + 6, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 影のリセット
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    // 2. 軒裏（木製の垂木構造・幕板）
+    const woodTop = y + height - 7;
+    const woodH = 7;
+    const woodGrad = ctx.createLinearGradient(x, woodTop, x, woodTop + woodH);
+    woodGrad.addColorStop(0, '#5a3d28');
+    woodGrad.addColorStop(1, '#2c1a0f');
+    ctx.fillStyle = woodGrad;
+    ctx.fillRect(x + 4, woodTop, width - 8, woodH);
+
+    // 垂木（等間隔に並ぶ木の角材断面）
+    const rafterSpacing = 16;
+    ctx.fillStyle = '#7a5438';
+    ctx.strokeStyle = '#24140a';
+    ctx.lineWidth = 0.8;
+    for (let rx = x + 12; rx < x + width - 12; rx += rafterSpacing) {
+      ctx.fillRect(rx - 3, woodTop + 1, 6, woodH - 1);
+      ctx.strokeRect(rx - 3, woodTop + 1, 6, woodH - 1);
+    }
+
+    // 3. 瓦屋根本体（反り上がりのある本瓦・いぶし瓦）
+    const roofH = height - 3;
+    const curveOffset = 3.5; // 端の反り上がり量
+
+    // 屋根ベースのパス（両端が少し反り上がった優美な和瓦形状）
+    ctx.beginPath();
+    ctx.moveTo(x - 4, y - curveOffset); // 左端反り
+    ctx.quadraticCurveTo(x + width * 0.15, y, x + width * 0.5, y); // 中央へ
+    ctx.quadraticCurveTo(x + width * 0.85, y, x + width + 4, y - curveOffset); // 右端反り
+    ctx.lineTo(x + width + 3, y + roofH);
+    ctx.lineTo(x - 3, y + roofH);
+    ctx.closePath();
+
+    // 瓦のベースグラデーション（いぶし銀・黒藍の重厚な質感）
+    const tileGrad = ctx.createLinearGradient(x, y - curveOffset, x, y + roofH);
+    tileGrad.addColorStop(0, '#4e5b66');   // 最上部ハイライト
+    tileGrad.addColorStop(0.2, '#38434d'); // 瓦の光沢
+    tileGrad.addColorStop(0.7, '#242b32'); // 本瓦の黒藍
+    tileGrad.addColorStop(1, '#15191d');   // 軒先シャドウ
+    ctx.fillStyle = tileGrad;
+    ctx.fill();
+
+    // 瓦の縦筋（男瓦・女瓦の立体的なリブと光沢）
+    const tileWidth = 16;
+    const numTiles = Math.floor(width / tileWidth);
+    const startTileX = x + (width % tileWidth) / 2;
+
+    ctx.save();
+    // 屋根内部にクリップして瓦を描画
+    ctx.clip();
+
+    for (let tx = startTileX; tx < x + width; tx += tileWidth) {
+      // 女瓦の影（窪み）
+      ctx.fillStyle = 'rgba(10, 15, 20, 0.6)';
+      ctx.fillRect(tx, y - 5, 3, roofH + 10);
+
+      // 男瓦（丸瓦の盛り上がりグラデーション）
+      const ridgeGrad = ctx.createLinearGradient(tx + 3, y, tx + tileWidth, y);
+      ridgeGrad.addColorStop(0, 'rgba(255, 255, 255, 0.25)'); // 左側ハイライト
+      ridgeGrad.addColorStop(0.4, 'rgba(255, 255, 255, 0.05)');
+      ridgeGrad.addColorStop(0.7, 'rgba(0, 0, 0, 0.2)');
+      ridgeGrad.addColorStop(1, 'rgba(0, 0, 0, 0.55)');      // 右側シャドウ
+      ctx.fillStyle = ridgeGrad;
+      ctx.fillRect(tx + 3, y - 5, tileWidth - 3, roofH + 10);
+    }
+    ctx.restore();
+
+    // 4. 軒丸瓦（巴瓦・軒先の半円装飾）
+    ctx.fillStyle = '#1c2227';
+    ctx.strokeStyle = '#3d4852';
+    ctx.lineWidth = 1;
+    for (let tx = startTileX + 8; tx < x + width - 4; tx += tileWidth) {
+      ctx.beginPath();
+      ctx.arc(tx, y + roofH - 1, 4.5, 0, Math.PI);
+      ctx.fill();
+      ctx.stroke();
+
+      // 巴瓦の芯（小さな真鍮ゴールドの鋲）
+      ctx.fillStyle = '#d4a340';
+      ctx.beginPath();
+      ctx.arc(tx, y + roofH + 1, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1c2227';
+    }
+
+    // 5. 軒先の金縁・真鍮幕板（視認性と高級感）
+    ctx.strokeStyle = '#e5a93b';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x - 3, y + roofH);
+    ctx.lineTo(x + width + 3, y + roofH);
+    ctx.stroke();
+
+    // 6. 屋根上面の足場エッジ（着地判定ライン・月の光彩）
+    ctx.strokeStyle = 'rgba(255, 220, 140, 0.85)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x - 4, y - curveOffset);
+    ctx.quadraticCurveTo(x + width * 0.15, y, x + width * 0.5, y);
+    ctx.quadraticCurveTo(x + width * 0.85, y, x + width + 4, y - curveOffset);
+    ctx.stroke();
+
+    // 7. 左右の端部（鬼板・漆塗りと飾り金物）
+    const renderEndCap = (capX, isLeft) => {
+      ctx.fillStyle = '#181d22';
+      ctx.strokeStyle = '#e5a93b';
+      ctx.lineWidth = 1.2;
+
+      ctx.beginPath();
+      const dir = isLeft ? -1 : 1;
+      ctx.moveTo(capX, y - curveOffset - 3);
+      ctx.lineTo(capX + dir * 5, y - curveOffset + 1);
+      ctx.lineTo(capX + dir * 3, y + roofH + 1);
+      ctx.lineTo(capX, y + roofH);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // 端の金飾り鋲
+      ctx.fillStyle = '#ffd700';
+      ctx.beginPath();
+      ctx.arc(capX + dir * 2, y - curveOffset + 1, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    };
+
+    renderEndCap(x - 3, true);
+    renderEndCap(x + width + 3, false);
+
+    // 8. 舞い落ちた桜の花びら（風情あるアクセント）
+    ctx.save();
+    // 瓦の上にそっと乗った桜の花びら（位置は足場のX座標に基づいて安定決定）
+    const petalOffsetX = 18 + ((Math.abs(Math.sin(x * 12.9898)) * (width - 40)));
+    const petalY = y + 1;
+    ctx.translate(x + petalOffsetX, petalY);
+    ctx.rotate(0.35 + Math.sin(x) * 0.4);
+    ctx.fillStyle = '#ffb7c5';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 4, 2.2, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff85a2';
+    ctx.beginPath();
+    ctx.ellipse(1, 0, 2, 1, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  // =========================================================================
   // ギミック（餅つきの大臼トランポリン）描画
   // =========================================================================
   renderSpring(ctx, spring) {
