@@ -244,13 +244,15 @@ class SpriteManager {
     }
 
     // スプライト描画
-    const renderW = player.width * 1.35;
-    const renderH = player.height * 1.25;
+    const isDefeat = (player.state === 'defeat');
+    const renderW = isDefeat ? player.width * 1.85 : player.width * 1.35;
+    const renderH = isDefeat ? player.height * 1.45 : player.height * 1.25;
+    const offsetY = isDefeat ? 6 : 0;
 
     ctx.drawImage(
       img,
       frame.x, frame.y, frame.w, frame.h,
-      -renderW / 2, -renderH / 2 + (player.state === 'defeat' ? 10 : 0),
+      -renderW / 2, -renderH / 2 + offsetY,
       renderW, renderH
     );
 

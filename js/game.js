@@ -70,6 +70,8 @@ class Game {
       shoot: false
     };
 
+    this.gameOverTimer = 0;
+
     this.initInputs();
   }
 
@@ -207,6 +209,7 @@ class Game {
     this.player.hasShield = false;
     this.player.hasDoubleJump = false;
     this.player.sakuramochiStock = 2;
+    this.gameOverTimer = 0;
 
     this.cameraX = 0;
     this.lastGeneratedX = 350;
@@ -755,15 +758,24 @@ class Game {
   }
 
   gameOver() {
+    if (this.state === 'GAMEOVER') return;
     this.state = 'GAMEOVER';
+    this.gameOverTimer = 0;
     this.player.state = 'defeat';
-    this.player.vy = -8.5;
-    this.player.vx = 0;
-    uiManager.showGameOver({
-      score: this.score,
-      distance: this.distance,
-      itemsCollected: this.itemsCollected
-    });
+    this.player.vy = -7.5;
+    this.player.vx = this.player.facingRight ? -1.0 : 1.0;
+    this.player.invincible = false;
+    this.player.hasDash = false;
+    this.player.hasShield = false;
+
+    soundEngine.stopBGM();
+    soundEngine.playGameOver();
+
+    this.addFloatingText(this.player.worldX + this.player.width / 2, this.player.y - 25, '💤 おやすみ女将さん...', '#ffb7c5');
+
+    for (let i = 0; i < 8; i++) {
+      this.addEffect(this.player.worldX + (Math.random() - 0.5) * 50, this.player.y + (Math.random() - 0.5) * 30, 'sparkle');
+    }
   }
 
   addFloatingText(worldX, y, text, color = '#ffffff') {
@@ -783,8 +795,8 @@ class Game {
       type: type,
       worldX: worldX,
       y: y,
-      life: 30,
-      maxLife: 30
+      life: type === 'sleep' ? 50 : 30,
+      maxLife: type === 'sleep' ? 50 : 30
     });
   }
 
@@ -793,13 +805,59 @@ class Game {
   // =========================================================================
   update() {
     if (this.state !== 'PLAYING') {
-      // ゲームオーバー中の落下物理
+      // ゲームオーバー中の演出更新
       if (this.state === 'GAMEOVER') {
-        this.player.vy += 0.6;
+        this.gameOverTimer = (this.gameOverTimer || 0) + 1;
+
+        // 女将さんのダウン物理
+        this.player.vy += 0.5;
         this.player.y += this.player.vy;
-        if (this.player.y >= this.groundY - this.player.height + 25) {
-          this.player.y = this.groundY - this.player.height + 25;
+        this.player.worldX += this.player.vx;
+        this.player.vx *= 0.92;
+
+        const groundY = this.getGroundYAt(this.player.worldX + this.player.width / 2) || this.baseGroundY;
+        const targetGroundY = groundY - this.player.height + 15;
+
+        if (this.player.y >= targetGroundY) {
+          if (this.player.vy > 2.0) {
+            // 初回着地時の土煙・きらめき
+            for (let i = 0; i < 6; i++) {
+              this.addEffect(this.player.worldX + this.player.width / 2 + (Math.random() - 0.5) * 30, groundY - 5, 'sparkle');
+            }
+          }
+          this.player.y = targetGroundY;
           this.player.vy = 0;
+          this.player.vx = 0;
+        }
+
+        // 定期的に頭上から「💤」がふわふわ浮遊
+        if (this.gameOverTimer % 24 === 0 && this.gameOverTimer < 115) {
+          this.addEffect(
+            this.player.worldX + (this.player.facingRight ? this.player.width * 0.25 : this.player.width * 0.75),
+            this.player.y - 8,
+            'sleep'
+          );
+        }
+
+        // エフェクト更新（ゲームオーバー中もアニメーションを維持）
+        this.effects.forEach((eff, idx) => {
+          eff.life--;
+          if (eff.type === 'text' || eff.type === 'sleep' || eff.type === 'sparkle') {
+            eff.y -= (eff.type === 'sleep' ? 1.0 : 0.8);
+            if (eff.type === 'sleep') {
+              eff.worldX += Math.sin(eff.life * 0.15) * 0.6;
+            }
+          }
+          if (eff.life <= 0) this.effects.splice(idx, 1);
+        });
+
+        // 演出完了後にリザルト画面表示（約2.3秒 / 140フレーム後）
+        if (this.gameOverTimer === 140) {
+          uiManager.showGameOver({
+            score: this.score,
+            distance: this.distance,
+            itemsCollected: this.itemsCollected
+          });
         }
       }
       return;
@@ -855,7 +913,6 @@ class Game {
       // 穴の上: 地面なし → 落下し続ける
       // 画面外まで落下したらダメージ＆復帰
       if (this.player.y > this.baseGroundY + 100) {
-        this.takeDamage();
         // 最後に安全だった地面に復帰
         const safeX = this.player.worldX - 150;
         const safeGround = this.getGroundYAt(safeX) || this.baseGroundY;
@@ -864,6 +921,7 @@ class Game {
         this.player.vy = 0;
         this.player.vx = 0;
         this.player.isGrounded = false;
+        this.takeDamage();
       }
     } else {
       // 通常の地面判定
@@ -1465,10 +1523,10 @@ class Game {
     const petalSpeed = (this.isFever ? 2.5 : 1.0) + Math.abs(this.player.vx) * 0.15;
     spriteManager.renderPetals(this.ctx, this.width, this.height, petalSpeed);
 
-    // 10. フローティングテキスト
+    // 10. フローティングテキスト＆エフェクト
     this.effects.forEach(eff => {
+      const screenX = eff.worldX - this.cameraX;
       if (eff.type === 'text') {
-        const screenX = eff.worldX - this.cameraX;
         this.ctx.save();
         this.ctx.font = 'bold 15px "Zen Maru Gothic", sans-serif';
         this.ctx.fillStyle = eff.color;
@@ -1479,8 +1537,79 @@ class Game {
         this.ctx.strokeText(eff.text, screenX, eff.y);
         this.ctx.fillText(eff.text, screenX, eff.y);
         this.ctx.restore();
+      } else if (eff.type === 'sleep') {
+        this.ctx.save();
+        this.ctx.font = 'bold 20px "Zen Maru Gothic", sans-serif';
+        this.ctx.fillStyle = '#bde0fe';
+        this.ctx.strokeStyle = '#1d3557';
+        this.ctx.lineWidth = 2.5;
+        this.ctx.textAlign = 'center';
+        this.ctx.globalAlpha = Math.sin((eff.life / eff.maxLife) * Math.PI);
+        this.ctx.strokeText('💤', screenX, eff.y);
+        this.ctx.fillText('💤', screenX, eff.y);
+        this.ctx.restore();
+      } else if (eff.type === 'sparkle') {
+        this.ctx.save();
+        this.ctx.fillStyle = '#ffd166';
+        this.ctx.globalAlpha = eff.life / eff.maxLife;
+        this.ctx.beginPath();
+        this.ctx.arc(screenX, eff.y, (1 - eff.life / eff.maxLife) * 6 + 2, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.restore();
       }
     });
+
+    // 11. ゲームオーバー演出オーバーレイ（周辺減光＆おやすみテロップ）
+    if (this.state === 'GAMEOVER') {
+      const progress = Math.min(1, (this.gameOverTimer || 0) / 45);
+      
+      this.ctx.save();
+      // 周辺減光（ヴィネット暗転）
+      const pScreenX = this.player.worldX - this.cameraX + this.player.width / 2;
+      const pScreenY = this.player.y + this.player.height / 2;
+      const grad = this.ctx.createRadialGradient(
+        pScreenX, pScreenY, 30,
+        pScreenX, pScreenY, Math.max(this.width, this.height) * 0.8
+      );
+      grad.addColorStop(0, 'rgba(0, 0, 0, 0.05)');
+      grad.addColorStop(0.45, `rgba(20, 10, 30, ${0.45 * progress})`);
+      grad.addColorStop(1, `rgba(10, 5, 15, ${0.75 * progress})`);
+      this.ctx.fillStyle = grad;
+      this.ctx.fillRect(0, 0, this.width, this.height);
+
+      // 女将さんの真上にスポットライト風の柔らかな光
+      if (progress > 0.3) {
+        const spotAlpha = (progress - 0.3) * 0.4;
+        const spotGrad = this.ctx.createRadialGradient(pScreenX, pScreenY, 5, pScreenX, pScreenY, 80);
+        spotGrad.addColorStop(0, `rgba(255, 245, 200, ${spotAlpha})`);
+        spotGrad.addColorStop(1, 'rgba(255, 245, 200, 0)');
+        this.ctx.fillStyle = spotGrad;
+        this.ctx.beginPath();
+        this.ctx.arc(pScreenX, pScreenY, 80, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
+
+      // 「無念...！」和風テロップ
+      if (this.gameOverTimer > 25) {
+        const textAlpha = Math.min(1, (this.gameOverTimer - 25) / 25);
+        this.ctx.globalAlpha = textAlpha;
+        this.ctx.font = '900 28px "Noto Serif JP", serif';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillStyle = '#ffdf9e';
+        this.ctx.strokeStyle = '#2b1d0c';
+        this.ctx.lineWidth = 6;
+        this.ctx.strokeText('無念... おやすみ女将さん', this.width / 2, 220);
+        this.ctx.fillText('無念... おやすみ女将さん', this.width / 2, 220);
+
+        this.ctx.font = 'bold 15px "Zen Maru Gothic", sans-serif';
+        this.ctx.fillStyle = '#ffccd5';
+        this.ctx.strokeStyle = '#000000';
+        this.ctx.lineWidth = 3;
+        this.ctx.strokeText('🌸 街道の旅は一休み 🌸', this.width / 2, 255);
+        this.ctx.fillText('🌸 街道の旅は一休み 🌸', this.width / 2, 255);
+      }
+      this.ctx.restore();
+    }
   }
 
   async start() {

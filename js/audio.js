@@ -252,6 +252,49 @@ class SoundEngine {
     osc.stop(now + 0.23);
   }
 
+  // ゲームオーバー演出音 (和風の哀愁メロディ＋チーン♪昇天・おやすみ音)
+  playGameOver() {
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+
+    // 1. 和風の下降フレーズ（琴のポロロン...）
+    const notes = [440, 392, 329.63, 293.66, 220]; // ラ・ソ・ミ・レ・ラ
+    notes.forEach((freq, idx) => {
+      const t = now + idx * 0.16;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t);
+
+      gain.gain.setValueAtTime(0.4, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+
+      osc.connect(gain);
+      gain.connect(this.seGain);
+      osc.start(t);
+      osc.stop(t + 0.36);
+    });
+
+    // 2. 清らかな鈴・おりんの響き（チーン...♪）
+    const bellT = now + 0.85;
+    [1046.5, 2093].forEach((freq) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, bellT);
+
+      gain.gain.setValueAtTime(0.35, bellT);
+      gain.gain.exponentialRampToValueAtTime(0.0001, bellT + 1.2);
+
+      osc.connect(gain);
+      gain.connect(this.seGain);
+      osc.start(bellT);
+      osc.stop(bellT + 1.25);
+    });
+  }
+
   // お茶会フィーバー突入音 (拍子木＋ドラ風の華やかな響き)
   playFeverStart() {
     if (!this.ctx || this.isMuted) return;
