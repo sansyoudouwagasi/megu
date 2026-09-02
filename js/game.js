@@ -494,26 +494,28 @@ class Game {
   }
 
   // =========================================================================
-  // 街道・ステージの前方生成（アイテム出現率を適正に抑えたバランス調整）
+  // 街道・ステージの前方生成（歯ごたえある敵配置＆スリリングな街道アクション）
   // =========================================================================
   generateStageAhead(targetX) {
     // まず地形を先行生成
     this.generateTerrainAhead(targetX + 400);
 
     const rareWagashi = ['dango', 'daifuku', 'dorayaki', 'sakuramochi'];
+    const difficulty = Math.min(1.0, this.distance / 1200); // 走行距離に応じた難易度
 
     while (this.lastGeneratedX < targetX) {
-      // セクションごとの間隔を 350px〜550px に設定し、過密を防ぐ
-      const sectionDist = 380 + Math.random() * 200;
+      // テンポよく敵と遭遇できるよう間隔を 220px〜340px に短縮（距離でさらに高密度化）
+      const baseDist = Math.max(200, 270 - difficulty * 60);
+      const sectionDist = baseDist + Math.random() * 100;
       this.lastGeneratedX += sectionDist;
       const x = this.lastGeneratedX;
       const localGroundY = this.getGroundYAt(x) || this.baseGroundY;
       const pattern = Math.random();
 
-      if (pattern < 0.28) {
-        // パターン1: 高台の瓦屋根 + 敵（タヌキ）+ 屋根の上に貴重な和菓子1個
-        const platW = 140 + Math.random() * 60;
-        const platY = localGroundY - (110 + Math.random() * 50);
+      if (pattern < 0.22) {
+        // パターン1: 高台の瓦屋根 + 敵（タヌキ）+ 屋根の上に貴重な和菓子
+        const platW = 130 + Math.random() * 60;
+        const platY = localGroundY - (105 + Math.random() * 45);
         this.platforms.push({
           x: x,
           y: platY,
@@ -522,7 +524,7 @@ class Game {
         });
 
         // 屋根の上にたまにパワーアップ和菓子
-        if (Math.random() < 0.6) {
+        if (Math.random() < 0.65) {
           this.items.push({
             x: x + platW / 2 - 18,
             y: platY - 42,
@@ -533,7 +535,7 @@ class Game {
         }
 
         // 地上にいたずらタヌキ（地上を巡回）
-        const tanukiX = x + platW + 40;
+        const tanukiX = x + platW + 30;
         const tanukiGroundY = this.getGroundYAt(tanukiX + 26);
         if (tanukiGroundY !== null) {
           this.enemies.push({
@@ -541,16 +543,17 @@ class Game {
             y: tanukiGroundY - 52,
             width: 52,
             height: 52,
-            minX: x + platW,
-            maxX: x + platW + 140,
-            vx: -0.8,
+            minX: x + platW - 20,
+            maxX: x + platW + 150,
+            vx: -1.1 - difficulty * 0.3,
             type: 'tanuki',
             isSatisfied: false
           });
         }
-      } else if (pattern < 0.50) {
-        // パターン2: 転がる酒樽障害物 + 金平糖1〜2個
-        const barrelX = x + 100;
+      } else if (pattern < 0.44) {
+        // パターン2: 転がる酒樽（単発または連続2連樽）+ 金平糖
+        const barrelSpeed = -2.8 - difficulty * 0.4;
+        const barrelX = x + 60;
         const barrelGroundY = this.getGroundYAt(barrelX + 23) || localGroundY;
         if (barrelGroundY !== null) {
           this.enemies.push({
@@ -558,74 +561,128 @@ class Game {
             y: barrelGroundY - 46,
             width: 46,
             height: 46,
-            vx: -2.4,
+            vx: barrelSpeed,
             type: 'barrel',
             rotation: 0,
             isSatisfied: false
           });
         }
 
-        // 控えめに金平糖を1個配置
-        if (Math.random() < 0.5) {
+        // 難易度や確率に応じて2連樽！
+        if (Math.random() < 0.35 + difficulty * 0.25) {
+          const barrel2X = barrelX + 75;
+          const barrel2GroundY = this.getGroundYAt(barrel2X + 23) || localGroundY;
+          if (barrel2GroundY !== null) {
+            this.enemies.push({
+              x: barrel2X,
+              y: barrel2GroundY - 46,
+              width: 46,
+              height: 46,
+              vx: barrelSpeed,
+              type: 'barrel',
+              rotation: 0,
+              isSatisfied: false
+            });
+          }
+        }
+
+        // 金平糖を配置
+        if (Math.random() < 0.6) {
           this.items.push({
-            x: x + 20,
+            x: x - 10,
             y: localGroundY - 45,
             width: 32,
             height: 32,
             type: 'konpeito'
           });
         }
-      } else if (pattern < 0.70) {
-        // パターン3: 急降下カラス + 空中に金平糖
-        const crowGroundY = this.getGroundYAt(x + 120 + 25) || localGroundY;
+      } else if (pattern < 0.65) {
+        // パターン3: 急降下カラス（単羽または高低2羽編隊）+ 和菓子
+        const crowGroundY = this.getGroundYAt(x + 100 + 25) || localGroundY;
         this.enemies.push({
-          x: x + 120,
-          y: crowGroundY - 170,
-          baseY: crowGroundY - 170,
+          x: x + 100,
+          y: crowGroundY - 165,
+          baseY: crowGroundY - 165,
           width: 50,
           height: 44,
-          vx: -1.8,
+          vx: -2.3 - difficulty * 0.4,
           type: 'crow',
           animPhase: Math.random() * Math.PI * 2,
           isSatisfied: false
         });
 
-        if (Math.random() < 0.45) {
+        // 2羽目のカラス（少し後方・高度違い）
+        if (Math.random() < 0.3 + difficulty * 0.25) {
+          this.enemies.push({
+            x: x + 180,
+            y: crowGroundY - 120,
+            baseY: crowGroundY - 120,
+            width: 50,
+            height: 44,
+            vx: -2.1 - difficulty * 0.3,
+            type: 'crow',
+            animPhase: Math.random() * Math.PI * 2 + 1.5,
+            isSatisfied: false
+          });
+        }
+
+        if (Math.random() < 0.5) {
           this.items.push({
-            x: x + 40,
-            y: localGroundY - 120,
+            x: x + 30,
+            y: localGroundY - 110,
             width: 34,
             height: 34,
-            type: Math.random() < 0.3 ? rareWagashi[Math.floor(Math.random() * rareWagashi.length)] : 'konpeito'
+            type: Math.random() < 0.35 ? rareWagashi[Math.floor(Math.random() * rareWagashi.length)] : 'konpeito'
           });
         }
       } else if (pattern < 0.82) {
-        // パターン4: 壁＋タヌキ の複合（壁を超えるとタヌキが待っている）
-        const wallH = 65 + Math.random() * 35;
+        // パターン4: 塀（石垣）＋ 転がる樽 or タヌキ の複合罠
+        const wallH = 65 + Math.random() * 30;
         this.walls.push({
           x: x,
           y: localGroundY - wallH,
           width: 28,
           height: wallH
         });
-        // 壁の向こう側にタヌキ
-        const tanukiX = x + 60;
-        const tanukiGroundY = this.getGroundYAt(tanukiX + 26) || localGroundY;
-        if (tanukiGroundY !== null) {
-          this.enemies.push({
-            x: tanukiX,
-            y: tanukiGroundY - 52,
-            width: 52,
-            height: 52,
-            minX: tanukiX - 40,
-            maxX: tanukiX + 80,
-            vx: -0.8,
-            type: 'tanuki',
-            isSatisfied: false
-          });
-        }
-        // 壁の上に和菓子
+
+        // 塀の手前に樽、または奥にタヌキ
         if (Math.random() < 0.5) {
+          // 塀の手前で跳ね返る樽
+          const barrelX = x + 80;
+          const barrelGroundY = this.getGroundYAt(barrelX + 23) || localGroundY;
+          if (barrelGroundY !== null) {
+            this.enemies.push({
+              x: barrelX,
+              y: barrelGroundY - 46,
+              width: 46,
+              height: 46,
+              vx: -2.8,
+              type: 'barrel',
+              rotation: 0,
+              isSatisfied: false
+            });
+          }
+        } else {
+          // 塀の向こう側にタヌキ
+          const tanukiX = x + 60;
+          const tanukiGroundY = this.getGroundYAt(tanukiX + 26) || localGroundY;
+          if (tanukiGroundY !== null) {
+            this.enemies.push({
+              x: tanukiX,
+              y: tanukiGroundY - 52,
+              width: 52,
+              height: 52,
+              minX: tanukiX - 40,
+              maxX: tanukiX + 90,
+              vx: -1.1,
+              type: 'tanuki',
+              isSatisfied: false
+            });
+          }
+        }
+
+        // 塀の上に和菓子
+        if (Math.random() < 0.55) {
           this.items.push({
             x: x - 4,
             y: localGroundY - wallH - 42,
@@ -634,8 +691,43 @@ class Game {
             type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)]
           });
         }
+      } else if (pattern < 0.92) {
+        // パターン5: 立体連携（地上樽 ＋ 上空カラスの上下挟み撃ち）
+        const barrelGroundY = this.getGroundYAt(x + 50) || localGroundY;
+        this.enemies.push({
+          x: x + 50,
+          y: barrelGroundY - 46,
+          width: 46,
+          height: 46,
+          vx: -2.6,
+          type: 'barrel',
+          rotation: 0,
+          isSatisfied: false
+        });
+
+        const crowGroundY = this.getGroundYAt(x + 130) || localGroundY;
+        this.enemies.push({
+          x: x + 130,
+          y: crowGroundY - 170,
+          baseY: crowGroundY - 170,
+          width: 50,
+          height: 44,
+          vx: -2.0,
+          type: 'crow',
+          animPhase: Math.random() * Math.PI * 2,
+          isSatisfied: false
+        });
+
+        // 金平糖
+        this.items.push({
+          x: x - 20,
+          y: localGroundY - 50,
+          width: 32,
+          height: 32,
+          type: 'konpeito'
+        });
       } else {
-        // パターン5: 餅つきの大臼（トランポリン） + 高空の和菓子
+        // パターン6: 餅つきの大臼（トランポリン） + 高空の貴重な和菓子 + 上空カラス
         this.springs.push({
           x: x,
           y: localGroundY - 36,
@@ -651,6 +743,21 @@ class Game {
           height: 40,
           type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)]
         });
+
+        // 高空にカラスがいて、大ジャンプで踏みつけ撃破できるチャンス！
+        if (Math.random() < 0.6) {
+          this.enemies.push({
+            x: x + 40,
+            y: localGroundY - 210,
+            baseY: localGroundY - 210,
+            width: 50,
+            height: 44,
+            vx: -1.6,
+            type: 'crow',
+            animPhase: 0,
+            isSatisfied: false
+          });
+        }
       }
     }
   }
