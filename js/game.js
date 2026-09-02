@@ -1088,7 +1088,41 @@ class Game {
         }
 
       } else if (enemy.type === 'barrel') {
-        enemy.x += enemy.vx;
+        const nextX = enemy.x + enemy.vx;
+        let hitWall = false;
+
+        // 1. 壁（塀・石垣）との衝突判定
+        this.walls.forEach(wall => {
+          if (
+            nextX + enemy.width > wall.x &&
+            nextX < wall.x + wall.width &&
+            enemy.y + enemy.height > wall.y &&
+            enemy.y < wall.y + wall.height
+          ) {
+            hitWall = true;
+            if (enemy.vx < 0) {
+              enemy.x = wall.x + wall.width;
+            } else if (enemy.vx > 0) {
+              enemy.x = wall.x - enemy.width;
+            }
+          }
+        });
+
+        // 2. 前方に登れない急な段差（崖）がある場合も反転
+        const frontX = nextX + (enemy.vx > 0 ? enemy.width + 5 : -5);
+        const frontGroundY = this.getGroundYAt(frontX);
+        const currentGroundY = this.getGroundYAt(enemy.x + enemy.width / 2);
+        if (frontGroundY !== null && currentGroundY !== null && (currentGroundY - frontGroundY > 35)) {
+          hitWall = true;
+        }
+
+        if (hitWall) {
+          enemy.vx = -enemy.vx;
+          enemy.x += enemy.vx;
+        } else {
+          enemy.x = nextX;
+        }
+
         const centerX = enemy.x + enemy.width / 2;
         const groundY = this.getGroundYAt(centerX);
 
@@ -1096,13 +1130,13 @@ class Game {
           // 地面に接地して転がる
           enemy.y = groundY - enemy.height;
           enemy.vy = 0;
-          // 移動速度に同期した自然な回転（左進行なので反時計回り）
+          // 移動速度に同期した自然な回転（向きに合わせて時計回り/反時計回り）
           enemy.rotation = (enemy.rotation || 0) + (enemy.vx / (enemy.width / 2));
         } else {
           // 穴の上に来たら重力で落下！
           enemy.vy = (enemy.vy || 0) + 0.65;
           enemy.y += enemy.vy;
-          enemy.rotation = (enemy.rotation || 0) - 0.15;
+          enemy.rotation = (enemy.rotation || 0) + (enemy.vx >= 0 ? 0.15 : -0.15);
         }
 
       } else if (enemy.type === 'crow') {
@@ -1165,7 +1199,7 @@ class Game {
     // ガベージコレクション
     this.platforms = this.platforms.filter(p => p.x > this.cameraX - 400);
     this.items = this.items.filter(i => i.x > this.cameraX - 400);
-    this.enemies = this.enemies.filter(e => e.x > this.cameraX - 400 && e.y < this.height + 150 && (!e.isSatisfied || Date.now() - e.satisfiedTime < 800));
+    this.enemies = this.enemies.filter(e => e.x > this.cameraX - 400 && e.x < this.cameraX + this.width + 1200 && e.y < this.height + 150 && (!e.isSatisfied || Date.now() - e.satisfiedTime < 800));
     this.springs = this.springs.filter(s => s.x > this.cameraX - 400);
     this.terrainSegments = this.terrainSegments.filter(t => t.x + t.width > this.cameraX - 600);
     this.walls = this.walls.filter(w => w.x > this.cameraX - 400);
