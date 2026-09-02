@@ -470,6 +470,66 @@ class Game {
         this.lastTerrainEndX += 120 + downW;
         this.currentTerrainY = this.baseGroundY;
 
+      } else if (roll < 0.72 + difficulty * 0.05) {
+        // ===== 大臼スーパージャンプ大峡谷（通常ジャンプ不可の大穴 ＋ 直前に大臼 ＋ 空中和菓子アーチ） =====
+        // 手前の助走地面
+        const approachW = 150;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: approachW,
+          y: prevY,
+          type: 'flat'
+        });
+
+        // 大穴の直前（縁から約55px手前）に必ず餅つきの大臼（トランポリン）を設置
+        const springX = this.lastTerrainEndX + approachW - 55;
+        this.springs.push({
+          x: springX,
+          y: prevY - 36,
+          width: 52,
+          height: 36
+        });
+        this.lastTerrainEndX += approachW;
+
+        // 通常ジャンプでは絶対に飛び越えられない巨大な穴（大峡谷: 幅 290px〜340px）
+        const giantGapW = 290 + Math.random() * 50;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: giantGapW,
+          y: prevY,
+          type: 'gap'
+        });
+
+        // 大ジャンプの放物線軌道に沿って空中にお宝アーチ（貴重な和菓子＋金平糖）を配置
+        const rareWagashiList = ['dango', 'daifuku', 'dorayaki', 'sakuramochi'];
+        const numItems = 4;
+        for (let i = 0; i < numItems; i++) {
+          const t = (i + 1) / (numItems + 1); // 0.2, 0.4, 0.6, 0.8
+          const itemX = this.lastTerrainEndX + giantGapW * t - 18;
+          // 放物線の美しい弧（頂点: prevY - 210）
+          const arcY = prevY - 55 - Math.sin(t * Math.PI) * 165;
+          const isRare = (i === 1 || i === 2); // アーチの頂点付近に名物和菓子
+          this.items.push({
+            x: itemX,
+            y: arcY,
+            width: isRare ? 38 : 32,
+            height: isRare ? 38 : 32,
+            type: isRare ? rareWagashiList[Math.floor(Math.random() * rareWagashiList.length)] : 'konpeito'
+          });
+        }
+
+        this.lastTerrainEndX += giantGapW;
+
+        // 対岸の広い平坦着地帯
+        const landingW = 260 + Math.random() * 100;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: landingW,
+          y: prevY,
+          type: 'flat'
+        });
+        this.lastTerrainEndX += landingW;
+
       } else {
         // ===== 通常の平坦地面（基準Yに戻す傾向あり） =====
         // 高すぎたら下り坂で基準Yに向かう
@@ -1235,10 +1295,13 @@ class Game {
         this.player.y + this.player.height <= spring.y + 24 &&
         this.player.vy >= 0
       ) {
-        this.player.vy = -19.0; // スーパージャンプ
+        this.player.vy = -20.5; // スーパージャンプ（大峡谷を飛び越える超跳躍）
+        this.player.vx = Math.max(this.player.vx, 6.2); // 前進推進力アシスト
         this.player.isGrounded = false;
+        this.player.canDoubleJump = this.player.hasDoubleJump;
         soundEngine.playSpring();
         this.addEffect(spring.x + spring.width / 2, spring.y, 'sparkle');
+        this.addFloatingText(spring.x + spring.width / 2, spring.y - 25, '✨ 大跳躍！', '#ffd166');
       }
     });
 
