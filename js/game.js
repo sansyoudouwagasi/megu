@@ -1124,6 +1124,20 @@ class Game {
       // 満足（浄化済み）の場合は退場アニメーション中なので通常移動・接地物理はスキップ
       if (enemy.isSatisfied) return;
 
+      // 画面の視界近く（カメラ右端+140px以内）に入るまでは待機（画面外での先行逃亡・反転を防止）
+      if (!enemy.activated) {
+        if (enemy.x <= this.cameraX + this.width + 140) {
+          enemy.activated = true;
+        } else {
+          // 画面外待機中は地面の高さのみ同期してスタンバイ
+          const groundY = this.getGroundYAt(enemy.x + enemy.width / 2);
+          if (groundY !== null && enemy.type !== 'crow') {
+            enemy.y = groundY - enemy.height;
+          }
+          return;
+        }
+      }
+
       // 敵の固有動作と地形・高低差追従
       if (enemy.type === 'tanuki') {
         const nextX = enemy.x + enemy.vx;
