@@ -168,9 +168,9 @@ class Game {
 
     this.projectiles.push({
       x: this.player.worldX + (this.player.facingRight ? this.player.width : -10),
-      y: this.player.y + this.player.height * 0.45,
-      vx: this.player.facingRight ? 11 : -11,
-      vy: -2.0,
+      y: this.player.y + this.player.height * 0.35,
+      vx: this.player.facingRight ? 7.2 : -7.2,
+      vy: -7.0,
       size: 36,
       rotation: 0
     });
@@ -998,33 +998,68 @@ class Game {
     });
 
     // 和菓子シュート（投擲弾）更新
-    this.projectiles.forEach((proj, pIdx) => {
+    for (let pIdx = this.projectiles.length - 1; pIdx >= 0; pIdx--) {
+      const proj = this.projectiles[pIdx];
       proj.x += proj.vx;
       proj.y += proj.vy;
-      proj.vy += 0.14;
-      proj.rotation += 0.15;
+      proj.vy += 0.35; // 弧を描く重力加速度
+      proj.rotation += (proj.vx >= 0 ? 1 : -1) * 0.18;
 
-      this.enemies.forEach((enemy) => {
+      let hit = false;
+
+      // 敵キャラクターとの当たり判定
+      const pRadius = proj.size * 0.4;
+      for (let eIdx = 0; eIdx < this.enemies.length; eIdx++) {
+        const enemy = this.enemies[eIdx];
         if (
           !enemy.isSatisfied &&
-          proj.x > enemy.x &&
-          proj.x < enemy.x + enemy.width &&
-          proj.y > enemy.y &&
-          proj.y < enemy.y + enemy.height
+          proj.x + pRadius > enemy.x &&
+          proj.x - pRadius < enemy.x + enemy.width &&
+          proj.y + pRadius > enemy.y &&
+          proj.y - pRadius < enemy.y + enemy.height
         ) {
           enemy.isSatisfied = true;
           enemy.satisfiedTime = Date.now();
           this.score += 500;
           soundEngine.playEnemySatisfied();
-          this.projectiles.splice(pIdx, 1);
           this.addFloatingText(enemy.x, enemy.y - 20, '🌸 美味しい！+500点', '#ff69b4');
+          this.addEffect(proj.x, proj.y, 'sparkle');
+          hit = true;
+          break;
         }
-      });
+      }
 
-      if (proj.x > this.cameraX + this.width + 100 || proj.x < this.cameraX - 100 || proj.y > this.height) {
+      // 壁との衝突判定
+      if (!hit) {
+        for (let wIdx = 0; wIdx < this.walls.length; wIdx++) {
+          const wall = this.walls[wIdx];
+          if (
+            proj.x + pRadius > wall.x &&
+            proj.x - pRadius < wall.x + wall.width &&
+            proj.y + pRadius > wall.y &&
+            proj.y - pRadius < wall.y + wall.height
+          ) {
+            this.addEffect(proj.x, proj.y, 'sparkle');
+            hit = true;
+            break;
+          }
+        }
+      }
+
+      // 地面への着地判定
+      if (!hit && proj.vy > 0) {
+        const groundY = this.getGroundYAt(proj.x);
+        if (groundY !== null && proj.y + pRadius >= groundY) {
+          this.addEffect(proj.x, groundY - 5, 'sparkle');
+          hit = true;
+        }
+      }
+
+      // 画面外または衝突による削除
+      if (hit || proj.x > this.cameraX + this.width + 150 || proj.x < this.cameraX - 150 || proj.y > this.height + 50) {
         this.projectiles.splice(pIdx, 1);
       }
-    });
+    }
 
     // 敵キャラクター更新＆精密な当たり判定
     this.enemies.forEach((enemy) => {
