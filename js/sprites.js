@@ -549,18 +549,59 @@ class SpriteManager {
     // 8. 舞い落ちた桜の花びら（風情あるアクセント）
     ctx.save();
     // 瓦の上にそっと乗った桜の花びら（位置は足場のX座標に基づいて安定決定）
-    const petalOffsetX = 18 + ((Math.abs(Math.sin(x * 12.9898)) * (width - 40)));
+    const petalOffsetX = 18 + ((Math.abs(Math.sin((plat.baseX || x) * 12.9898)) * (width - 40)));
     const petalY = y + 1;
     ctx.translate(x + petalOffsetX, petalY);
     ctx.rotate(0.35 + Math.sin(x) * 0.4);
     ctx.fillStyle = '#ffb7c5';
     ctx.beginPath();
     ctx.ellipse(0, 0, 4, 2.2, 0, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = '#ff85a2';
     ctx.beginPath();
     ctx.ellipse(1, 0, 2, 1, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+
+    // 9. 動く足場（左右に揺れる瓦屋根）専用の和風装飾（風鈴・金房）
+    if (plat.isMoving) {
+      const swingAngle = Math.sin(plat.movePhase || 0) * 0.35;
+
+      const drawWindChime = (chimeX) => {
+        ctx.save();
+        ctx.translate(chimeX, y + height + 2);
+        ctx.rotate(swingAngle);
+
+        // 吊り紐（朱色）
+        ctx.strokeStyle = '#e63946';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, 6);
+        ctx.stroke();
+
+        // 鈴（真鍮ゴールド）
+        ctx.fillStyle = '#ffd166';
+        ctx.strokeStyle = '#c7921a';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.arc(0, 8, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // 短冊・飾り房（桜色・風になびく）
+        ctx.fillStyle = '#ffb7c5';
+        ctx.strokeStyle = '#e63946';
+        ctx.lineWidth = 0.6;
+        ctx.fillRect(-2, 11, 4, 10);
+        ctx.strokeRect(-2, 11, 4, 10);
+
+        ctx.restore();
+      };
+
+      drawWindChime(x + 10);
+      drawWindChime(x + width - 10);
+    }
 
     ctx.restore();
   }

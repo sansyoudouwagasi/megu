@@ -442,12 +442,19 @@ class Game {
           y: newY,
           type: 'gap'
         });
-        // 穴の向こう側に着地プラットフォーム
+        // 穴の向こう側に着地プラットフォーム（静止または左右に揺れる足場）
+        const isPlatMoving = Math.random() < 0.45;
         this.platforms.push({
+          baseX: this.lastTerrainEndX + gapW,
           x: this.lastTerrainEndX + gapW,
           y: newY,
           width: 120,
-          height: 18
+          height: 18,
+          isMoving: isPlatMoving,
+          moveRange: isPlatMoving ? 45 + Math.random() * 25 : 0,
+          moveSpeed: 0.03 + Math.random() * 0.015,
+          movePhase: Math.random() * Math.PI * 2,
+          dx: 0
         });
         this.lastTerrainEndX += gapW;
         // 下り坂で基準に戻る
@@ -512,25 +519,35 @@ class Game {
       const localGroundY = this.getGroundYAt(x) || this.baseGroundY;
       const pattern = Math.random();
 
-      if (pattern < 0.22) {
-        // パターン1: 高台の瓦屋根 + 敵（タヌキ）+ 屋根の上に貴重な和菓子
-        const platW = 130 + Math.random() * 60;
+      if (pattern < 0.20) {
+        // パターン1: 高台の瓦屋根（動かない足場 or 左右に揺れる動く足場）+ 敵（タヌキ）+ 和菓子
+        const platW = 130 + Math.random() * 50;
         const platY = localGroundY - (105 + Math.random() * 45);
-        this.platforms.push({
+        const isMoving = Math.random() < 0.50; // 約50%の確率で左右に揺れる動く足場
+        const moveRange = isMoving ? 50 + Math.random() * 30 : 0;
+        const plat = {
+          baseX: x,
           x: x,
           y: platY,
           width: platW,
-          height: 18
-        });
+          height: 18,
+          isMoving: isMoving,
+          moveRange: moveRange,
+          moveSpeed: 0.03 + Math.random() * 0.015,
+          movePhase: Math.random() * Math.PI * 2,
+          dx: 0
+        };
+        this.platforms.push(plat);
 
-        // 屋根の上にたまにパワーアップ和菓子
+        // 屋根の上にたまにパワーアップ和菓子（動く足場の場合は連動）
         if (Math.random() < 0.65) {
           this.items.push({
             x: x + platW / 2 - 18,
             y: platY - 42,
             width: 38,
             height: 38,
-            type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)]
+            type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)],
+            platformRef: isMoving ? plat : null
           });
         }
 
@@ -691,8 +708,73 @@ class Game {
             type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)]
           });
         }
-      } else if (pattern < 0.92) {
-        // パターン5: 立体連携（地上樽 ＋ 上空カラスの上下挟み撃ち）
+      } else if (pattern < 0.88) {
+        // パターン5: 空中瓦渡り（左右に揺れる動く足場 ＋ 静止足場の連携）+ 高空の和菓子
+        const plat1W = 100 + Math.random() * 30;
+        const plat1Y = localGroundY - 110;
+        const plat1 = {
+          baseX: x,
+          x: x,
+          y: plat1Y,
+          width: plat1W,
+          height: 18,
+          isMoving: true, // 左右に揺れる動く足場
+          moveRange: 55,
+          moveSpeed: 0.038,
+          movePhase: 0,
+          dx: 0
+        };
+        this.platforms.push(plat1);
+
+        const plat2W = 110 + Math.random() * 30;
+        const plat2Y = localGroundY - 170;
+        const plat2 = {
+          baseX: x + 130,
+          x: x + 130,
+          y: plat2Y,
+          width: plat2W,
+          height: 18,
+          isMoving: false, // 静止した足場
+          moveRange: 0,
+          moveSpeed: 0,
+          movePhase: 0,
+          dx: 0
+        };
+        this.platforms.push(plat2);
+
+        // 2つ目の足場の上に貴重な和菓子
+        this.items.push({
+          x: x + 130 + plat2W / 2 - 18,
+          y: plat2Y - 42,
+          width: 38,
+          height: 38,
+          type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)]
+        });
+
+        // 1つ目の動く足場の上に金平糖（足場と同期して揺れる）
+        this.items.push({
+          x: x + plat1W / 2 - 16,
+          y: plat1Y - 40,
+          width: 32,
+          height: 32,
+          type: 'konpeito',
+          platformRef: plat1
+        });
+
+        // 地上には転がる樽
+        const barrelGroundY = this.getGroundYAt(x + 100) || localGroundY;
+        this.enemies.push({
+          x: x + 100,
+          y: barrelGroundY - 46,
+          width: 46,
+          height: 46,
+          vx: -2.6,
+          type: 'barrel',
+          rotation: 0,
+          isSatisfied: false
+        });
+      } else if (pattern < 0.95) {
+        // パターン6: 立体連携（地上樽 ＋ 上空カラスの上下挟み撃ち）
         const barrelGroundY = this.getGroundYAt(x + 50) || localGroundY;
         this.enemies.push({
           x: x + 50,
@@ -727,7 +809,7 @@ class Game {
           type: 'konpeito'
         });
       } else {
-        // パターン6: 餅つきの大臼（トランポリン） + 高空の貴重な和菓子 + 上空カラス
+        // パターン7: 餅つきの大臼（トランポリン） + 高空の貴重な和菓子 + 上空カラス
         this.springs.push({
           x: x,
           y: localGroundY - 36,
@@ -1008,6 +1090,25 @@ class Game {
     // 前方の街道を先行生成
     this.generateStageAhead(this.cameraX + 1200);
 
+    // プラットフォーム（瓦屋根足場）の更新（動く足場の左右揺動＆乗っているアイテムの同期）
+    this.platforms.forEach(plat => {
+      if (plat.isMoving) {
+        const prevX = plat.x;
+        plat.movePhase = (plat.movePhase || 0) + (plat.moveSpeed || 0.035);
+        plat.x = plat.baseX + Math.sin(plat.movePhase) * plat.moveRange;
+        plat.dx = plat.x - prevX;
+      } else {
+        plat.dx = 0;
+      }
+    });
+
+    // 動く足場に乗っているアイテムの同期
+    this.items.forEach(item => {
+      if (item.platformRef && item.platformRef.dx) {
+        item.x += item.platformRef.dx;
+      }
+    });
+
     // 重力・垂直物理
     this.player.vy += 0.68;
     this.player.y += this.player.vy;
@@ -1084,6 +1185,10 @@ class Game {
         this.player.vy = 0;
         this.player.isGrounded = true;
         this.player.canDoubleJump = this.player.hasDoubleJump;
+        // 動く足場に乗っているときはプレイヤーも一緒に左右移動
+        if (plat.isMoving && plat.dx) {
+          this.player.worldX += plat.dx;
+        }
       }
     });
 
@@ -1575,7 +1680,10 @@ class Game {
         x: pX,
         y: plat.y,
         width: plat.width,
-        height: plat.height
+        height: plat.height,
+        isMoving: plat.isMoving,
+        movePhase: plat.movePhase,
+        baseX: (plat.baseX !== undefined ? plat.baseX : plat.x) - this.cameraX
       });
     });
 
