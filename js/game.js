@@ -1152,6 +1152,17 @@ class Game {
   }
 
   // =========================================================================
+  // お茶会フィーバーゲージ管理（じっくり貯めて特別なご褒美にする調整）
+  // =========================================================================
+  addFeverGauge(amount) {
+    if (this.isFever) return;
+    this.feverGauge = Math.max(0, Math.min(100, this.feverGauge + amount));
+    if (this.feverGauge >= 100) {
+      this.startFever();
+    }
+  }
+
+  // =========================================================================
   // パワーアップ適用（コンボ倍率・重複ボーナス・フィーバー加速）
   // =========================================================================
   applyPowerup(type) {
@@ -1163,13 +1174,9 @@ class Game {
     const basePts = Math.round(200 * mult);
     this.score += basePts;
 
-    // フィーバーゲージ蓄積（めったにないご褒美になるよう適正調整。希少な金平糖は大ボーナス！）
-    if (!this.isFever) {
-      this.feverGauge = Math.min(100, this.feverGauge + (type === 'konpeito' ? 22 : 10));
-      if (this.feverGauge >= 100) {
-        this.startFever();
-      }
-    }
+    // フィーバーゲージ蓄積（名物和菓子 +3.5、5連以上コンボ維持で +1、希少な金平糖 +12）
+    const comboBonus = this.combo >= 5 ? 1 : 0;
+    this.addFeverGauge((type === 'konpeito' ? 12 : 3.5) + comboBonus);
 
     soundEngine.playCollectItem();
 
@@ -1188,7 +1195,7 @@ class Game {
         if (hadFullLifeAndShield) {
           const bonus = Math.round(600 * mult);
           this.score += bonus;
-          if (!this.isFever) this.feverGauge = Math.min(100, this.feverGauge + 20);
+          this.addFeverGauge(3);
           soundEngine.playPowerup();
           this.addFloatingText(this.player.worldX, this.player.y - 22, `🍵 極上抹茶! +${bonus}`, '#9ef08c');
         } else {
@@ -1305,6 +1312,10 @@ class Game {
     this.player.invincible = true;
     this.player.invincibleTimer = 120; // 約2.0秒間無敵点滅
     this.combo = 0;
+    // 被弾するとフィーバーゲージが少し減少（MAX直前のドキドキ感UP！）
+    if (!this.isFever && this.feverGauge > 0) {
+      this.feverGauge = Math.max(0, this.feverGauge - 12);
+    }
 
     this.addFloatingText(this.player.worldX, this.player.y - 20, '💥 痛っ! 気をつけて!', '#ff6b6b');
 
@@ -1849,7 +1860,7 @@ class Game {
           enemy.satisfiedTime = Date.now();
           const pts = Math.round(500 * this.getComboMultiplier() * (this.isFever ? 2 : 1));
           this.score += pts;
-          if (!this.isFever) this.feverGauge = Math.min(100, this.feverGauge + 6);
+          this.addFeverGauge(2);
           soundEngine.playEnemySatisfied();
           this.addFloatingText(enemy.x, enemy.y - 20, `🌸 美味しい！+${pts}`, '#ff69b4');
           this.addEffect(proj.x, proj.y, 'sparkle');
@@ -2089,7 +2100,7 @@ class Game {
             this.player.canDoubleJump = this.player.hasDoubleJump; // 連続アクション用に2段ジャンプ回復
             const stompPts = (350 + (this.stompCombo - 1) * 150) * (this.isFever ? 2 : 1);
             this.score += stompPts;
-            if (!this.isFever) this.feverGauge = Math.min(100, this.feverGauge + 5);
+            this.addFeverGauge(2);
             this.hitStopTimer = 2;
             this.triggerScreenShake(6, 3);
             soundEngine.playEnemySatisfied();
@@ -2115,10 +2126,7 @@ class Game {
             enemy.nearMissAwarded = true;
             const bonus = Math.round(150 * this.getComboMultiplier());
             this.score += bonus;
-            this.feverGauge = Math.min(100, this.feverGauge + 5);
-            if (this.feverGauge >= 100 && !this.isFever) {
-              this.startFever();
-            }
+            this.addFeverGauge(2);
             soundEngine.playNearMiss();
             this.addFloatingText(this.player.worldX + this.player.width / 2, this.player.y - 24, `✨ ヒヤリ回避! +${bonus}`, '#72efdd');
             this.addEffect(this.player.worldX + this.player.width / 2, this.player.y + this.player.height / 2, 'sparkle');
