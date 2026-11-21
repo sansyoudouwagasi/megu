@@ -12,12 +12,17 @@ class UIManager {
     this.zukanModal = document.getElementById('zukan-modal');
     this.howtoplayModal = document.getElementById('howtoplay-modal');
     this.feverBanner = document.getElementById('fever-banner');
+    this.stationBanner = document.getElementById('station-banner');
+    this.stationBannerName = document.getElementById('station-banner-name');
+    this.stationBannerBonus = document.getElementById('station-banner-bonus');
+    this.stationBannerTimer = null;
 
     // HUD要素
     this.hudLivesContainer = document.getElementById('hud-lives-container');
     this.hudScore = document.getElementById('hud-score');
     this.hudDistance = document.getElementById('hud-distance');
     this.hudComboText = document.getElementById('hud-combo-text');
+    this.hudFeverStatus = document.getElementById('hud-fever-status');
     this.hudFeverFill = document.getElementById('hud-fever-fill');
     this.hudPowerupBadges = document.getElementById('hud-powerup-badges');
     this.hudSoundToggle = document.getElementById('hud-sound-toggle');
@@ -135,31 +140,51 @@ class UIManager {
     const station = this.getCurrentStation(distM);
     this.hudDistance.textContent = `${station} ${distM}m`;
 
-    // ライフ更新
+    // ライフ更新（残り1の時はドキドキ鼓動アニメーション）
     const icons = this.hudLivesContainer.children;
     for (let i = 0; i < icons.length; i++) {
       if (i < gameState.lives) {
         icons[i].classList.remove('lost');
+        if (gameState.lives === 1) {
+          icons[i].classList.add('pinch');
+        } else {
+          icons[i].classList.remove('pinch');
+        }
       } else {
         icons[i].classList.add('lost');
+        icons[i].classList.remove('pinch');
       }
     }
 
     // コンボ＆フィーバーゲージ
-    this.hudComboText.textContent = gameState.combo > 1 ? `🍡 連続和菓子: ${gameState.combo}連!` : '和菓子を集めよう';
+    const mult = gameState.comboMultiplier || 1;
+    if (gameState.combo > 1) {
+      this.hudComboText.textContent = mult > 1
+        ? `🍡 ${gameState.combo}連続! (×${mult.toFixed(1)})`
+        : `🍡 連続和菓子: ${gameState.combo}連!`;
+    } else {
+      this.hudComboText.textContent = '和菓子を集めよう';
+    }
+    if (this.hudFeverStatus) {
+      this.hudFeverStatus.textContent = gameState.isFever ? '🌸 フィーバー中!! (得点2倍)' : 'お茶会フィーバー';
+    }
     const feverPct = Math.min(100, (gameState.feverGauge / 100) * 100);
     this.hudFeverFill.style.width = `${feverPct}%`;
 
     // パワーアップバッジ
     let badgeHtml = '';
     if (gameState.hasDash) {
-      badgeHtml += `<span class="powerup-badge">🍡 団子ダッシュ (${Math.ceil(gameState.dashTimer / 60)}s)</span>`;
+      const sec = Math.ceil(gameState.dashTimer / 60);
+      const warnStyle = gameState.dashTimer <= 90 ? ' style="border-color:#ff6b6b;color:#ffd0d0;"' : '';
+      badgeHtml += `<span class="powerup-badge"${warnStyle}>🍡 団子ダッシュ (${sec}s)</span>`;
     }
     if (gameState.hasShield) {
       badgeHtml += `<span class="powerup-badge">🍵 抹茶シールド</span>`;
     }
     if (gameState.hasDoubleJump) {
-      badgeHtml += `<span class="powerup-badge">🥮 2段ジャンプ</span>`;
+      badgeHtml += gameState.floatTimer > 0
+        ? `<span class="powerup-badge">🥮 ふわふわ2段 (${Math.ceil(gameState.floatTimer / 60)}s)</span>`
+        : `<span class="powerup-badge">🥮 2段ジャンプ</span>`;
     }
     if (gameState.sakuramochiStock > 0) {
       badgeHtml += `<span class="powerup-badge">🌸 桜餅×${gameState.sakuramochiStock}</span>`;
@@ -172,6 +197,17 @@ class UIManager {
     setTimeout(() => {
       this.feverBanner.classList.remove('active');
     }, 1800);
+  }
+
+  triggerStationBanner(stationName, bonusText) {
+    if (!this.stationBanner) return;
+    this.stationBannerName.textContent = stationName;
+    this.stationBannerBonus.textContent = bonusText;
+    this.stationBanner.classList.add('active');
+    if (this.stationBannerTimer) clearTimeout(this.stationBannerTimer);
+    this.stationBannerTimer = setTimeout(() => {
+      this.stationBanner.classList.remove('active');
+    }, 2400);
   }
 }
 

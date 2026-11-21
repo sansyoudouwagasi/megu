@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>めぐみ堂の女将さん ～ 和菓子お届け街道大作戦 ～</title>
   <meta name="description" content="和菓子屋の女将さんが街道を駆け巡る！スマホ縦画面対応の爽快2Dスクロールアクションゲーム">
-  <link rel="stylesheet" href="css/style.css?v=2.2">
+  <link rel="stylesheet" href="css/style.css?v=2.3">
   <!-- Google Fonts: Noto Serif JP & Zen Maru Gothic -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -72,6 +72,13 @@
         <div id="fever-banner">
           <div class="fever-text-sub">🌸 桜満開 🌸</div>
           <div class="fever-text-main">お茶会フィーバー突入!!</div>
+        </div>
+
+        <!-- 宿場町到達バナー -->
+        <div id="station-banner">
+          <div class="station-text-sub">🏮 宿場町 到着 🏮</div>
+          <div id="station-banner-name" class="station-text-main">品川宿</div>
+          <div id="station-banner-bonus" class="station-text-bonus">お茶休憩ボーナス！ 桜餅+1＆+500点</div>
         </div>
 
         <!-- オンスクリーンコントローラー（スマホ用タッチ操作ボタン） -->
@@ -194,7 +201,7 @@
               <div class="zukan-icon-wrapper">🍵</div>
               <div class="zukan-info">
                 <div class="zukan-name">抹茶大福【お茶の加護】</div>
-                <div class="zukan-desc">濃厚な宇治抹茶の大福。体力を全回復し、ダメージを1回防ぐ桜のシールドを展開！</div>
+                <div class="zukan-desc">濃厚な宇治抹茶の大福。体力を回復し、ダメージを1回防ぐ桜のシールドを展開！ピンチの時は少し出やすいかも？</div>
               </div>
             </div>
 
@@ -202,7 +209,7 @@
               <div class="zukan-icon-wrapper">🥮</div>
               <div class="zukan-info">
                 <div class="zukan-name">栗どら焼き【ふわふわ2段跳び】</div>
-                <div class="zukan-desc">大粒の栗が入ったどら焼き。ジャンプ力が上昇し、空中でもう一度跳べる2段ジャンプが可能に！</div>
+                <div class="zukan-desc">大粒の栗が入ったどら焼き。空中でもう一度跳べる2段ジャンプを習得！習得済みの時はふわふわ滞空ボーナス！</div>
               </div>
             </div>
 
@@ -210,7 +217,7 @@
               <div class="zukan-icon-wrapper">🌸</div>
               <div class="zukan-info">
                 <div class="zukan-name">桜餅【和菓子シュート】</div>
-                <div class="zukan-desc">桜葉の香るお餅。前方に投げていたずらタヌキやカラスに渡すと、大満足してボーナス獲得！</div>
+                <div class="zukan-desc">桜葉の香るお餅。投げていたずらタヌキやカラスに渡すと大満足して金平糖のお返し＆ボーナス獲得！</div>
               </div>
             </div>
 
@@ -218,7 +225,7 @@
               <div class="zukan-icon-wrapper">🌟</div>
               <div class="zukan-info">
                 <div class="zukan-name">金平糖【お茶会フィーバー】</div>
-                <div class="zukan-desc">キラキラ輝く砂糖菓子。連続で集めてゲージMAXになると、画面中の和菓子を吸い寄せるフィーバー発動！</div>
+                <div class="zukan-desc">キラキラ輝く砂糖菓子。連続で集めてゲージMAXになると、和菓子を吸い寄せ敵もおもてなし突破できるフィーバー発動！</div>
               </div>
             </div>
           </div>
@@ -249,9 +256,10 @@
             </div>
             <div class="guide-item">
               <strong>✨ 攻略のコツ</strong>
-              ・和菓子を落とさず連続で集めてフィーバーを発動させよう！<br>
-              ・餅つきの大臼を見つけたら飛び乗って大ジャンプ！<br>
-              ・いたずらタヌキは和菓子を投げるか踏みつけて満足させよう！
+              ・ジャンプボタンの長押しで高さ調整！金平糖のアーチをなぞると綺麗に跳べるよ！<br>
+              ・敵や酒樽をギリギリで避けると「✨ヒヤリ回避」でボーナス＆フィーバー加速！<br>
+              ・餅つきの大臼に飛び乗ると大峡谷を一気に大ジャンプ！<br>
+              ・いたずらタヌキやカラスは桜餅を投げるか上から踏みつけて満足させよう！
             </div>
           </div>
 
@@ -265,9 +273,9 @@
   </div>
 
   <!-- スクリプト読み込み -->
-  <script src="js/audio.js?v=2.2"></script>
-  <script src="js/sprites.js?v=2.2"></script>
-  <script src="js/ui.js?v=2.2"></script>
-  <script src="js/game.js?v=2.2"></script>
+  <script src="js/audio.js?v=2.3"></script>
+  <script src="js/sprites.js?v=2.3"></script>
+  <script src="js/ui.js?v=2.3"></script>
+  <script src="js/game.js?v=2.3"></script>
 </body>
 </html>

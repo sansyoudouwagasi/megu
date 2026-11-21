@@ -295,6 +295,64 @@ class SoundEngine {
     });
   }
 
+  // ヒヤリ回避（紙一重ニアミス）音 (シュッ・キラン♪)
+  playNearMiss() {
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    [987.77, 1318.5].forEach((freq, idx) => {
+      const t = now + idx * 0.04;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.15, t + 0.09);
+
+      gain.gain.setValueAtTime(0.28, t);
+      gain.gain.exponentialRampToValueAtTime(0.005, t + 0.12);
+
+      osc.connect(gain);
+      gain.connect(this.seGain);
+      osc.start(t);
+      osc.stop(t + 0.13);
+    });
+  }
+
+  // 宿場町到着ファンファーレ (拍子木＋明るい和風和音)
+  playStationArrive() {
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+
+    // 軽快な拍子木
+    const clack = this.ctx.createOscillator();
+    const clackGain = this.ctx.createGain();
+    clack.type = 'triangle';
+    clack.frequency.setValueAtTime(1700, now);
+    clack.frequency.exponentialRampToValueAtTime(850, now + 0.035);
+    clackGain.gain.setValueAtTime(0.55, now);
+    clackGain.gain.exponentialRampToValueAtTime(0.01, now + 0.045);
+    clack.connect(clackGain);
+    clackGain.connect(this.seGain);
+    clack.start(now);
+    clack.stop(now + 0.05);
+
+    // 陽音階の明るいアルペジオ (C5 - D5 - G5 - C6)
+    [523.25, 587.33, 783.99, 1046.5].forEach((freq, idx) => {
+      const t = now + 0.06 + idx * 0.065;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t);
+
+      gain.gain.setValueAtTime(0.32, t);
+      gain.gain.exponentialRampToValueAtTime(0.005, t + 0.32);
+
+      osc.connect(gain);
+      gain.connect(this.seGain);
+      osc.start(t);
+      osc.stop(t + 0.34);
+    });
+  }
+
   // お茶会フィーバー突入音 (拍子木＋ドラ風の華やかな響き)
   playFeverStart() {
     if (!this.ctx || this.isMuted) return;

@@ -17,6 +17,7 @@
   --text-muted: #d8c3b0;
   --font-serif: "Yu Mincho", "Hiragino Mincho ProN", "YuMincho", "Noto Serif JP", serif;
   --font-sans: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
+  --font-maru: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "Yu Gothic", sans-serif;
 }
 
 * {
@@ -258,9 +259,6 @@ html, body {
   align-items: flex-start;
   width: 100%;
 }
-  align-items: flex-start;
-  width: 100%;
-}
 
 .hud-stats {
   display: flex;
@@ -308,6 +306,17 @@ html, body {
 .life-icon.lost {
   opacity: 0.25;
   transform: scale(0.8);
+}
+
+.life-icon.pinch {
+  animation: heartbeatPinch 0.75s ease-in-out infinite;
+  filter: drop-shadow(0 0 6px rgba(255, 80, 110, 0.95));
+}
+
+@keyframes heartbeatPinch {
+  0%, 100% { transform: scale(1); }
+  40% { transform: scale(1.26); }
+  65% { transform: scale(0.95); }
 }
 
 .hud-top-right {
@@ -464,6 +473,55 @@ html, body {
   letter-spacing: 3px;
   color: #fff8d6;
   text-shadow: 0 3px 6px rgba(0,0,0,0.6), 0 0 12px #fff;
+}
+
+/* 宿場町到達バナー */
+#station-banner {
+  position: absolute;
+  top: 22%;
+  left: 50%;
+  transform: translate(-50%, -20px) scale(0.85);
+  opacity: 0;
+  width: 82%;
+  text-align: center;
+  background: linear-gradient(135deg, rgba(40, 26, 18, 0.94) 0%, rgba(74, 45, 28, 0.94) 100%);
+  border: 2px solid var(--primary-gold);
+  border-radius: 14px;
+  padding: 10px 16px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.75), 0 0 16px rgba(229, 169, 59, 0.45);
+  pointer-events: none;
+  transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
+  z-index: 14;
+}
+
+#station-banner.active {
+  transform: translate(-50%, 0) scale(1);
+  opacity: 1;
+}
+
+.station-text-sub {
+  font-family: var(--font-maru);
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffb7c5;
+  letter-spacing: 1.5px;
+}
+
+.station-text-main {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 900;
+  color: #ffebbe;
+  letter-spacing: 2px;
+  text-shadow: 0 2px 5px rgba(0,0,0,0.8);
+  margin: 2px 0;
+}
+
+.station-text-bonus {
+  font-family: var(--font-maru);
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffd166;
 }
 
 /* ==========================================================================

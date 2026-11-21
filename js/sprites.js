@@ -224,10 +224,31 @@ class SpriteManager {
       ctx.globalAlpha = 0.4;
     }
 
-    // ダッシュ時のスピード残像オーラ
+    // ダッシュ時のスピード残像オーラ（終了間際は赤系に点滅して予告！）
     if (player.hasDash) {
-      ctx.shadowColor = '#ffc857';
-      ctx.shadowBlur = 20;
+      const isEnding = (player.dashTimer !== undefined && player.dashTimer <= 90);
+      if (isEnding && Math.floor(Date.now() / 100) % 2 === 0) {
+        ctx.shadowColor = '#ff5c5c';
+        ctx.shadowBlur = 24;
+      } else {
+        ctx.shadowColor = '#ffc857';
+        ctx.shadowBlur = 22;
+      }
+    } else if (player.isFever) {
+      ctx.shadowColor = '#ff85a2';
+      ctx.shadowBlur = 18;
+    }
+
+    // ふわふわ滞空ボーナス中のやわらか光輪
+    if (player.floatTimer > 0) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 215, 102, 0.75)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.ellipse(0, player.height * 0.45, player.width * 0.55, 8, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     }
 
     // 抹茶シールド（桜の回転バリア）
@@ -322,6 +343,11 @@ class SpriteManager {
       ctx.rotate(enemy.rotation || 0);
     } else if (enemy.vx < 0) {
       ctx.scale(-1, 1);
+    }
+
+    // タヌキのぴょん跳ね時の軽い伸縮表現
+    if (enemy.type === 'tanuki' && enemy.hopVy !== undefined && enemy.hopOffsetY < -1) {
+      ctx.scale(0.94, 1.07);
     }
 
     if (img && img.complete) {
@@ -633,6 +659,46 @@ class SpriteManager {
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.fillText('大臼', 0, spring.height / 3);
+
+    ctx.restore();
+  }
+
+  // =========================================================================
+  // 画面右端の敵接近アラート（予兆テレグラフ）描画
+  // =========================================================================
+  renderWarning(ctx, y, type, canvasWidth) {
+    const clampedY = Math.max(150, Math.min(640, y));
+    const pulse = 0.88 + Math.sin(Date.now() / 75) * 0.12;
+    const badgeX = canvasWidth - 26;
+
+    ctx.save();
+    ctx.translate(badgeX, clampedY);
+    ctx.scale(pulse, pulse);
+
+    // 外枠バッジ（和風の朱色＆金縁）
+    ctx.fillStyle = type === 'crow' ? 'rgba(199, 55, 47, 0.9)' : 'rgba(214, 118, 28, 0.92)';
+    ctx.strokeStyle = '#ffdf9e';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 17, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // 左向き三角矢印（右から来ることを示す）
+    ctx.fillStyle = '#ffdf9e';
+    ctx.beginPath();
+    ctx.moveTo(-24, 0);
+    ctx.lineTo(-17, -6);
+    ctx.lineTo(-17, 6);
+    ctx.closePath();
+    ctx.fill();
+
+    // ラベル
+    ctx.font = 'bold 12px "Zen Maru Gothic", sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(type === 'crow' ? '鴉!' : '樽!', 0, 1);
 
     ctx.restore();
   }

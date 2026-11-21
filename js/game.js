@@ -21,6 +21,13 @@ class Game {
     this.feverGauge = 0;
     this.isFever = false;
     this.feverTimer = 0;
+    this.lastStationIndex = 0;
+    this.stompCombo = 0;
+
+    // 演出・手触りタイマー
+    this.hitStopTimer = 0;
+    this.shakeTimer = 0;
+    this.shakeMagnitude = 0;
 
     // カメラ＆街道設定 (プレイヤーのworldXにカメラが追従)
     this.cameraX = 0;
@@ -39,6 +46,12 @@ class Game {
       baseSpeed: 4.8,
       isGrounded: true,
       canDoubleJump: false,
+      coyoteTimer: 0,      // 崖踏み出し猶予フレーム
+      jumpBufferTimer: 0,  // ジャンプ先行入力フレーム
+      springBoostTimer: 0, // 大臼ジャンプ後の前進ブースト維持フレーム
+      knockbackTimer: 0,   // 被弾ノックバック演出フレーム
+      lastSafeX: 120,      // 穴落下時の安全な復帰X座標
+      lastSafeY: 575,      // 穴落下時の安全な復帰Y座標
       state: 'idle',
       facingRight: true,
       animTimer: 0,
@@ -49,7 +62,8 @@ class Game {
       dashTimer: 0,
       hasShield: false,
       hasDoubleJump: false,
-      sakuramochiStock: 2
+      floatTimer: 0,       // どら焼き重複取得時のふわふわ滞空タイマー
+      sakuramochiStock: 3
     };
 
     // ゲームオブジェクト配列
@@ -97,12 +111,15 @@ class Game {
     window.addEventListener('keyup', (e) => {
       if (e.code === 'ArrowLeft' || e.code === 'KeyA') this.keys.left = false;
       if (e.code === 'ArrowRight' || e.code === 'KeyD') this.keys.right = false;
-      if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space') this.keys.jump = false;
+      if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space') {
+        this.keys.jump = false;
+        this.handleJumpRelease();
+      }
       if (e.code === 'KeyZ' || e.code === 'KeyJ' || e.code === 'Enter') this.keys.shoot = false;
     });
 
     // オンスクリーンボタン
-    const bindBtn = (id, keyName, triggerAction = null) => {
+    const bindBtn = (id, keyName, triggerAction = null, releaseAction = null) => {
       const btn = document.getElementById(id);
       if (!btn) return;
 
@@ -117,6 +134,7 @@ class Game {
         e.preventDefault();
         this.keys[keyName] = false;
         btn.classList.remove('active');
+        if (releaseAction) releaseAction();
       };
 
       btn.addEventListener('touchstart', handlePress, { passive: false });
@@ -129,7 +147,7 @@ class Game {
 
     bindBtn('btn-left', 'left');
     bindBtn('btn-right', 'right');
-    bindBtn('btn-jump', 'jump', () => this.handleJump());
+    bindBtn('btn-jump', 'jump', () => this.handleJump(), () => this.handleJumpRelease());
     bindBtn('btn-shoot', 'shoot', () => this.handleShoot());
 
     // キャンバスタップでのジャンプ
@@ -148,16 +166,30 @@ class Game {
   handleJump() {
     if (this.state !== 'PLAYING') return;
 
-    if (this.player.isGrounded) {
-      this.player.vy = -14.5;
+    if (this.player.isGrounded || this.player.coyoteTimer > 0) {
+      this.player.vy = -14.6;
       this.player.isGrounded = false;
+      this.player.coyoteTimer = 0;
+      this.player.jumpBufferTimer = 0;
       this.player.canDoubleJump = this.player.hasDoubleJump;
       soundEngine.playJump();
     } else if (this.player.canDoubleJump) {
-      this.player.vy = -13.5;
+      this.player.vy = -13.6;
       this.player.canDoubleJump = false;
+      this.player.jumpBufferTimer = 0;
       soundEngine.playDoubleJump();
       this.addEffect(this.player.worldX + this.player.width / 2, this.player.y + this.player.height, 'sparkle');
+    } else {
+      // 着地直前のジャンプ先行入力を記憶（8フレーム）
+      this.player.jumpBufferTimer = 8;
+    }
+  }
+
+  // 可変ジャンプ高さ（ジャンプボタンを早めに離すと小ジャンプになる）
+  handleJumpRelease() {
+    if (this.state !== 'PLAYING') return;
+    if (this.player.vy < -5.5 && this.player.springBoostTimer <= 0) {
+      this.player.vy *= 0.58;
     }
   }
 
@@ -170,9 +202,9 @@ class Game {
 
     this.projectiles.push({
       x: this.player.worldX + (this.player.facingRight ? this.player.width : -10),
-      y: this.player.y + this.player.height * 0.35,
-      vx: this.player.facingRight ? 7.2 : -7.2,
-      vy: -7.0,
+      y: this.player.y + this.player.height * 0.32,
+      vx: this.player.facingRight ? 8.2 : -8.2,
+      vy: -5.8,
       size: 36,
       rotation: 0
     });
@@ -192,6 +224,11 @@ class Game {
     this.feverGauge = 0;
     this.isFever = false;
     this.feverTimer = 0;
+    this.lastStationIndex = 0;
+    this.stompCombo = 0;
+    this.hitStopTimer = 0;
+    this.shakeTimer = 0;
+    this.shakeMagnitude = 0;
 
     // プレイヤー初期化
     this.player.worldX = 120;
@@ -199,6 +236,13 @@ class Game {
     this.player.vx = 0;
     this.player.vy = 0;
     this.player.isGrounded = true;
+    this.player.canDoubleJump = false;
+    this.player.coyoteTimer = 0;
+    this.player.jumpBufferTimer = 0;
+    this.player.springBoostTimer = 0;
+    this.player.knockbackTimer = 0;
+    this.player.lastSafeX = 120;
+    this.player.lastSafeY = this.baseGroundY - this.player.height;
     this.player.state = 'idle';
     this.player.facingRight = true;
     this.player.animTimer = 0;
@@ -208,11 +252,12 @@ class Game {
     this.player.dashTimer = 0;
     this.player.hasShield = false;
     this.player.hasDoubleJump = false;
-    this.player.sakuramochiStock = 2;
+    this.player.floatTimer = 0;
+    this.player.sakuramochiStock = 3;
     this.gameOverTimer = 0;
 
     this.cameraX = 0;
-    this.lastGeneratedX = 350;
+    this.lastGeneratedX = 400;
     this.lastTerrainEndX = 0;
     this.currentTerrainY = this.baseGroundY;
 
@@ -226,15 +271,18 @@ class Game {
     this.terrainSegments = [];
     this.walls = [];
 
-    // 初期の平坦な地面セグメント
+    // 初期の平坦な地面セグメント（スタート直後は気持ちよく和菓子集めの導入）
     this.terrainSegments.push({
       x: 0,
-      width: 600,
+      width: 720,
       y: this.baseGroundY,
       type: 'flat'
     });
-    this.lastTerrainEndX = 600;
+    this.lastTerrainEndX = 720;
     this.currentTerrainY = this.baseGroundY;
+
+    // スタート直後のウェルカム金平糖アーチ（最初の1歩を楽しく！）
+    this.spawnKonpeitoArc(250, 410, this.baseGroundY - 45, 75, 4);
 
     // 初期街道生成
     this.generateStageAhead(1600);
@@ -269,35 +317,104 @@ class Game {
   }
 
   // =========================================================================
-  // 地形の前方生成（コースに高低差を付ける）
+  // バランス＆配置ヘルパー（理不尽配置の防止・金平糖アーチ・動的レア選出）
+  // =========================================================================
+  isGroundSolidRange(startX, endX) {
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let px = startX; px <= endX; px += 24) {
+      const gy = this.getGroundYAt(px);
+      if (gy === null) return false;
+      if (gy < minY) minY = gy;
+      if (gy > maxY) maxY = gy;
+    }
+    const endGy = this.getGroundYAt(endX);
+    if (endGy === null) return false;
+    if (endGy < minY) minY = endGy;
+    if (endGy > maxY) maxY = endGy;
+    return (maxY - minY) <= 55;
+  }
+
+  hasObstacleNear(x, margin = 90) {
+    for (let i = 0; i < this.springs.length; i++) {
+      if (Math.abs(this.springs[i].x - x) < margin) return true;
+    }
+    for (let i = 0; i < this.walls.length; i++) {
+      if (Math.abs(this.walls[i].x - x) < margin) return true;
+    }
+    return false;
+  }
+
+  // レア和菓子の動的選出（体力1のピンチ時は抹茶大福が出やすい！）
+  pickRareWagashi() {
+    if (this.lives === 1 && !this.player.hasShield && Math.random() < 0.45) {
+      return 'daifuku';
+    }
+    if (this.player.sakuramochiStock === 0 && Math.random() < 0.35) {
+      return 'sakuramochi';
+    }
+    const rareWagashi = ['dango', 'daifuku', 'dorayaki', 'sakuramochi'];
+    return rareWagashi[Math.floor(Math.random() * rareWagashi.length)];
+  }
+
+  // 美しい放物線アーチ状に金平糖を配置（ジャンプ軌道の自然なガイド）
+  spawnKonpeitoArc(startX, endX, baseY, peakHeight, count = 3) {
+    for (let i = 0; i < count; i++) {
+      const t = count === 1 ? 0.5 : i / (count - 1);
+      const ix = startX + (endX - startX) * t;
+      const iy = baseY - Math.sin(t * Math.PI) * peakHeight;
+      this.items.push({
+        x: ix - 16,
+        y: iy - 16,
+        width: 32,
+        height: 32,
+        type: 'konpeito'
+      });
+    }
+  }
+
+  getComboMultiplier() {
+    return 1 + Math.min(1.5, Math.floor(this.combo / 5) * 0.25);
+  }
+
+  triggerScreenShake(frames, magnitude) {
+    if (magnitude >= this.shakeMagnitude || this.shakeTimer <= 0) {
+      this.shakeTimer = Math.max(this.shakeTimer, frames);
+      this.shakeMagnitude = Math.max(this.shakeMagnitude, magnitude);
+    }
+  }
+
+  // =========================================================================
+  // 地形の前方生成（段階的に変化する高低差＆爽快な大峡谷）
   // =========================================================================
   generateTerrainAhead(targetX) {
     while (this.lastTerrainEndX < targetX) {
       const roll = Math.random();
       const prevY = this.currentTerrainY;
-      // 距離に応じて難易度UP: 距離が進むほど穴や高低差が出やすくなる
-      const difficulty = Math.min(1.0, this.distance / 500);
+      // 距離に応じて緩やかに難易度UP（序盤は気持ちよく慣れる設計）
+      const difficulty = Math.min(1.0, this.distance / 1200);
+      const isEarly = this.distance < 150;
 
-      if (roll < 0.10 + difficulty * 0.08) {
-        // ===== 穴（ギャップ）: ジャンプで飛び越える =====
-        const gapWidth = 80 + Math.random() * 60 + difficulty * 30;
+      if (roll < 0.11 + difficulty * 0.06) {
+        // ===== 穴（ギャップ）: ジャンプで飛び越える + 金平糖ガイドアーチ =====
+        const gapWidth = 75 + Math.random() * 45 + difficulty * 35; // 最大約155px（通常ジャンプで余裕＋スリル）
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: gapWidth,
           y: prevY,
           type: 'gap'
         });
-        // 穴の上に金平糖を誘導配置
-        this.items.push({
-          x: this.lastTerrainEndX + gapWidth / 2 - 16,
-          y: prevY - 120,
-          width: 32,
-          height: 32,
-          type: 'konpeito'
-        });
+        // 穴の上に金平糖3個の放物線ガイドを配置
+        this.spawnKonpeitoArc(
+          this.lastTerrainEndX + 10,
+          this.lastTerrainEndX + gapWidth - 10,
+          prevY - 58,
+          62,
+          3
+        );
         this.lastTerrainEndX += gapWidth;
-        // 穴の先は平坦な着地帯
-        const landingW = 200 + Math.random() * 150;
+        // 穴の先は安全な平坦着地帯
+        const landingW = 240 + Math.random() * 140;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: landingW,
@@ -306,11 +423,11 @@ class Game {
         });
         this.lastTerrainEndX += landingW;
 
-      } else if (roll < 0.22 + difficulty * 0.06) {
+      } else if (roll < 0.24 + difficulty * 0.05) {
         // ===== 上り坂 → 高台 =====
-        const riseAmount = 50 + Math.random() * 60;
-        const slopeW = 120 + Math.random() * 80;
-        const newY = Math.max(480, prevY - riseAmount); // 画面上限制限
+        const riseAmount = 45 + Math.random() * 55;
+        const slopeW = 130 + Math.random() * 70;
+        const newY = Math.max(495, prevY - riseAmount);
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: slopeW,
@@ -320,8 +437,7 @@ class Game {
           type: 'slope_up'
         });
         this.lastTerrainEndX += slopeW;
-        // 高台の平坦部分
-        const flatW = 250 + Math.random() * 200;
+        const flatW = 260 + Math.random() * 180;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: flatW,
@@ -331,10 +447,10 @@ class Game {
         this.lastTerrainEndX += flatW;
         this.currentTerrainY = newY;
 
-      } else if (roll < 0.34 + difficulty * 0.04) {
+      } else if (roll < 0.36 + difficulty * 0.04) {
         // ===== 下り坂 → 谷 =====
         const dropAmount = 40 + Math.random() * 50;
-        const slopeW = 100 + Math.random() * 80;
+        const slopeW = 110 + Math.random() * 70;
         const newY = Math.min(this.baseGroundY, prevY + dropAmount);
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
@@ -345,7 +461,7 @@ class Game {
           type: 'slope_down'
         });
         this.lastTerrainEndX += slopeW;
-        const flatW = 200 + Math.random() * 150;
+        const flatW = 220 + Math.random() * 150;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: flatW,
@@ -355,33 +471,30 @@ class Game {
         this.lastTerrainEndX += flatW;
         this.currentTerrainY = newY;
 
-      } else if (roll < 0.42 + difficulty * 0.05) {
-        // ===== 階段状の段差（3段の上り階段） =====
-        const stepW = 90;
-        const stepH = 35;
+      } else if (roll < 0.45 + difficulty * 0.04) {
+        // ===== 階段状の段差（3段の上り階段＋金平糖） =====
+        const stepW = 95;
+        const stepH = 34;
         let stepY = prevY;
         for (let s = 0; s < 3; s++) {
-          stepY -= stepH;
+          stepY = Math.max(490, stepY - stepH);
           this.terrainSegments.push({
             x: this.lastTerrainEndX,
             width: stepW,
             y: stepY,
             type: 'raised'
           });
-          // 各段に金平糖を時々配置
-          if (Math.random() < 0.4) {
-            this.items.push({
-              x: this.lastTerrainEndX + stepW / 2 - 16,
-              y: stepY - 42,
-              width: 32,
-              height: 32,
-              type: 'konpeito'
-            });
-          }
+          // 各段に金平糖をテンポよく配置
+          this.items.push({
+            x: this.lastTerrainEndX + stepW / 2 - 16,
+            y: stepY - 46,
+            width: 32,
+            height: 32,
+            type: 'konpeito'
+          });
           this.lastTerrainEndX += stepW;
         }
-        // 階段の頂上の平坦部分
-        const topW = 180 + Math.random() * 120;
+        const topW = 200 + Math.random() * 120;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: topW,
@@ -391,17 +504,18 @@ class Game {
         this.lastTerrainEndX += topW;
         this.currentTerrainY = stepY;
 
-      } else if (roll < 0.50 + difficulty * 0.04) {
-        // ===== 地面に石垣の壁（ジャンプで越える） =====
-        const wallH = 70 + Math.random() * 40;
+      } else if (!isEarly && roll < 0.53 + difficulty * 0.04) {
+        // ===== 地面に石垣の壁（ジャンプで越える + 上に金平糖アーチ） =====
+        const wallH = 58 + Math.random() * 34;
+        const wallX = this.lastTerrainEndX + 80;
         this.walls.push({
-          x: this.lastTerrainEndX + 50,
+          x: wallX,
           y: prevY - wallH,
           width: 30,
           height: wallH
         });
-        // 壁の先の平坦地面
-        const segW = 350 + Math.random() * 200;
+        this.spawnKonpeitoArc(wallX - 45, wallX + 75, prevY - wallH - 35, 36, 3);
+        const segW = 360 + Math.random() * 180;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: segW,
@@ -410,12 +524,11 @@ class Game {
         });
         this.lastTerrainEndX += segW;
 
-      } else if (roll < 0.56 + difficulty * 0.05) {
-        // ===== 高台→穴→高台（浮島風） =====
-        const riseH = 60 + Math.random() * 40;
-        const newY = Math.max(500, prevY - riseH);
-        // 上り坂
-        const slopeW = 80;
+      } else if (!isEarly && roll < 0.61 + difficulty * 0.04) {
+        // ===== 高台→穴→瓦足場→安全着地（浮島アクション） =====
+        const riseH = 55 + Math.random() * 35;
+        const newY = Math.max(510, prevY - riseH);
+        const slopeW = 85;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: slopeW,
@@ -425,8 +538,8 @@ class Game {
           type: 'slope_up'
         });
         this.lastTerrainEndX += slopeW;
-        // 高台部分
-        const platW = 120 + Math.random() * 80;
+
+        const platW = 135 + Math.random() * 65;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: platW,
@@ -434,46 +547,64 @@ class Game {
           type: 'raised'
         });
         this.lastTerrainEndX += platW;
-        // 穴
-        const gapW = 100 + Math.random() * 50;
+
+        // 浮島を挟む穴（幅を適正化し、中央の瓦足場から確実に着地できる構造へ）
+        const totalGapW = 240;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
-          width: gapW,
+          width: totalGapW,
           y: newY,
           type: 'gap'
         });
-        // 穴の向こう側に着地プラットフォーム（静止または左右に揺れる足場）
-        const isPlatMoving = Math.random() < 0.45;
-        this.platforms.push({
-          baseX: this.lastTerrainEndX + gapW,
-          x: this.lastTerrainEndX + gapW,
+        const isPlatMoving = Math.random() < 0.40 + difficulty * 0.2;
+        const floatPlat = {
+          baseX: this.lastTerrainEndX + 58,
+          x: this.lastTerrainEndX + 58,
           y: newY,
-          width: 120,
+          width: 124,
           height: 18,
           isMoving: isPlatMoving,
-          moveRange: isPlatMoving ? 45 + Math.random() * 25 : 0,
-          moveSpeed: 0.03 + Math.random() * 0.015,
+          moveRange: isPlatMoving ? 32 : 0,
+          moveSpeed: 0.028 + Math.random() * 0.012,
           movePhase: Math.random() * Math.PI * 2,
           dx: 0
+        };
+        this.platforms.push(floatPlat);
+        this.items.push({
+          x: floatPlat.x + floatPlat.width / 2 - 18,
+          y: newY - 46,
+          width: 38,
+          height: 38,
+          type: this.pickRareWagashi(),
+          platformRef: isPlatMoving ? floatPlat : null
         });
-        this.lastTerrainEndX += gapW;
-        // 下り坂で基準に戻る
-        const downW = 80;
+        this.lastTerrainEndX += totalGapW;
+
+        // 対岸の着地台→緩やかな下り坂で基準へ戻る
+        const landW = 120;
         this.terrainSegments.push({
-          x: this.lastTerrainEndX + 120,
+          x: this.lastTerrainEndX,
+          width: landW,
+          y: newY,
+          type: 'raised'
+        });
+        this.lastTerrainEndX += landW;
+
+        const downW = 90;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
           width: downW,
           yFrom: newY,
           yTo: this.baseGroundY,
           y: this.baseGroundY,
           type: 'slope_down'
         });
-        this.lastTerrainEndX += 120 + downW;
+        this.lastTerrainEndX += downW;
         this.currentTerrainY = this.baseGroundY;
 
-      } else if (roll < 0.72 + difficulty * 0.05) {
-        // ===== 大臼スーパージャンプ大峡谷（通常ジャンプ不可の大穴 ＋ 直前に大臼 ＋ 空中和菓子アーチ） =====
-        // 手前の助走地面
-        const approachW = 150;
+      } else if (!isEarly && roll < 0.74 + difficulty * 0.04) {
+        // ===== 大臼スーパージャンプ大峡谷（爽快大ジャンプ＋空中お宝アーチ） =====
+        const approachW = 165;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: approachW,
@@ -481,18 +612,18 @@ class Game {
           type: 'flat'
         });
 
-        // 大穴の直前（縁から約55px手前）に必ず餅つきの大臼（トランポリン）を設置
-        const springX = this.lastTerrainEndX + approachW - 55;
+        // 大穴の直前（縁から52px手前）に必ず餅つきの大臼を設置
+        const springX = this.lastTerrainEndX + approachW - 56;
         this.springs.push({
           x: springX,
           y: prevY - 36,
-          width: 52,
+          width: 56,
           height: 36
         });
         this.lastTerrainEndX += approachW;
 
-        // 通常ジャンプでは絶対に飛び越えられない巨大な穴（大峡谷: 幅 290px〜340px）
-        const giantGapW = 290 + Math.random() * 50;
+        // 大臼ブーストで気持ちよく確実に超えられる大峡谷（幅 255px〜300px）
+        const giantGapW = 255 + Math.random() * 45;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: giantGapW,
@@ -500,28 +631,26 @@ class Game {
           type: 'gap'
         });
 
-        // 大ジャンプの放物線軌道に沿って空中にお宝アーチ（貴重な和菓子＋金平糖）を配置
-        const rareWagashiList = ['dango', 'daifuku', 'dorayaki', 'sakuramochi'];
-        const numItems = 4;
+        // 大ジャンプの放物線軌道に沿ってお宝アーチ（5個）を配置
+        const numItems = 5;
         for (let i = 0; i < numItems; i++) {
-          const t = (i + 1) / (numItems + 1); // 0.2, 0.4, 0.6, 0.8
+          const t = (i + 1) / (numItems + 1);
           const itemX = this.lastTerrainEndX + giantGapW * t - 18;
-          // 放物線の美しい弧（頂点: prevY - 210）
-          const arcY = prevY - 55 - Math.sin(t * Math.PI) * 165;
-          const isRare = (i === 1 || i === 2); // アーチの頂点付近に名物和菓子
+          const arcY = prevY - 60 - Math.sin(t * Math.PI) * 175;
+          const isRare = (i === 2); // アーチの頂点に名物和菓子！
           this.items.push({
             x: itemX,
             y: arcY,
             width: isRare ? 38 : 32,
             height: isRare ? 38 : 32,
-            type: isRare ? rareWagashiList[Math.floor(Math.random() * rareWagashiList.length)] : 'konpeito'
+            type: isRare ? this.pickRareWagashi() : 'konpeito'
           });
         }
 
         this.lastTerrainEndX += giantGapW;
 
         // 対岸の広い平坦着地帯
-        const landingW = 260 + Math.random() * 100;
+        const landingW = 280 + Math.random() * 100;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: landingW,
@@ -531,8 +660,7 @@ class Game {
         this.lastTerrainEndX += landingW;
 
       } else {
-        // ===== 通常の平坦地面（基準Yに戻す傾向あり） =====
-        // 高すぎたら下り坂で基準Yに向かう
+        // ===== 通常の平坦地面（高すぎたら下り坂で基準Yへ緩やかに戻る） =====
         if (prevY < this.baseGroundY - 40) {
           const slopeW = 100 + Math.random() * 60;
           const returnY = prevY + 40 + Math.random() * 30;
@@ -548,7 +676,7 @@ class Game {
           this.lastTerrainEndX += slopeW;
           this.currentTerrainY = newY;
         }
-        const flatW = 300 + Math.random() * 250;
+        const flatW = 300 + Math.random() * 220;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: flatW,
@@ -561,30 +689,37 @@ class Game {
   }
 
   // =========================================================================
-  // 街道・ステージの前方生成（歯ごたえある敵配置＆スリリングな街道アクション）
+  // 街道・ステージの前方生成（緩急のあるリズム・安全配置・ドキドキ感）
   // =========================================================================
   generateStageAhead(targetX) {
     // まず地形を先行生成
-    this.generateTerrainAhead(targetX + 400);
+    this.generateTerrainAhead(targetX + 450);
 
-    const rareWagashi = ['dango', 'daifuku', 'dorayaki', 'sakuramochi'];
-    const difficulty = Math.min(1.0, this.distance / 1200); // 走行距離に応じた難易度
+    const difficulty = Math.min(1.0, this.distance / 1500); // 緩やかな難易度上昇カーブ
+    const isMidOrLater = this.distance >= 260; // 品川宿手前から中盤ギミック解禁
 
     while (this.lastGeneratedX < targetX) {
-      // テンポよく敵と遭遇できるよう間隔を 220px〜340px に短縮（距離でさらに高密度化）
-      const baseDist = Math.max(200, 270 - difficulty * 60);
-      const sectionDist = baseDist + Math.random() * 100;
+      // 序盤はゆったり(300〜390px)、進むほどテンポアップ(225〜310px)
+      const baseDist = Math.max(225, 305 - difficulty * 80);
+      const sectionDist = baseDist + Math.random() * 90;
       this.lastGeneratedX += sectionDist;
       const x = this.lastGeneratedX;
-      const localGroundY = this.getGroundYAt(x) || this.baseGroundY;
+      const rawGroundY = this.getGroundYAt(x);
+
+      // 穴の上や既存の大臼・壁のすぐ近くは地上ギミックを置かない（理不尽配置の防止！）
+      if (rawGroundY === null || this.hasObstacleNear(x, 115)) {
+        continue;
+      }
+
+      const localGroundY = rawGroundY;
       const pattern = Math.random();
 
-      if (pattern < 0.20) {
-        // パターン1: 高台の瓦屋根（動かない足場 or 左右に揺れる動く足場）+ 敵（タヌキ）+ 和菓子
-        const platW = 130 + Math.random() * 50;
-        const platY = localGroundY - (105 + Math.random() * 45);
-        const isMoving = Math.random() < 0.50; // 約50%の確率で左右に揺れる動く足場
-        const moveRange = isMoving ? 50 + Math.random() * 30 : 0;
+      if (pattern < 0.22) {
+        // パターン1: 瓦屋根足場（静止 or 動く足場）+ 名物和菓子 + 地上タヌキ
+        const platW = 135 + Math.random() * 45;
+        const platY = localGroundY - (100 + Math.random() * 38);
+        const isMoving = isMidOrLater && Math.random() < 0.42;
+        const moveRange = isMoving ? 42 + Math.random() * 24 : 0;
         const plat = {
           baseX: x,
           x: x,
@@ -593,208 +728,218 @@ class Game {
           height: 18,
           isMoving: isMoving,
           moveRange: moveRange,
-          moveSpeed: 0.03 + Math.random() * 0.015,
+          moveSpeed: 0.028 + Math.random() * 0.012,
           movePhase: Math.random() * Math.PI * 2,
           dx: 0
         };
         this.platforms.push(plat);
 
-        // 屋根の上にたまにパワーアップ和菓子（動く足場の場合は連動）
-        if (Math.random() < 0.65) {
+        // 屋根の上に名物和菓子＋両脇に金平糖
+        if (Math.random() < 0.78) {
           this.items.push({
-            x: x + platW / 2 - 18,
-            y: platY - 42,
+            x: x + platW / 2 - 19,
+            y: platY - 44,
             width: 38,
             height: 38,
-            type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)],
+            type: this.pickRareWagashi(),
             platformRef: isMoving ? plat : null
           });
-        }
-
-        // 地上にいたずらタヌキ（地上を巡回）
-        const tanukiX = x + platW + 30;
-        const tanukiGroundY = this.getGroundYAt(tanukiX + 26);
-        if (tanukiGroundY !== null) {
-          this.enemies.push({
-            x: tanukiX,
-            y: tanukiGroundY - 52,
-            width: 52,
-            height: 52,
-            minX: x + platW - 20,
-            maxX: x + platW + 150,
-            vx: -1.1 - difficulty * 0.3,
-            type: 'tanuki',
-            isSatisfied: false
-          });
-        }
-      } else if (pattern < 0.44) {
-        // パターン2: 転がる酒樽（単発または連続2連樽）+ 金平糖
-        const barrelSpeed = -2.8 - difficulty * 0.4;
-        const barrelX = x + 60;
-        const barrelGroundY = this.getGroundYAt(barrelX + 23) || localGroundY;
-        if (barrelGroundY !== null) {
-          this.enemies.push({
-            x: barrelX,
-            y: barrelGroundY - 46,
-            width: 46,
-            height: 46,
-            vx: barrelSpeed,
-            type: 'barrel',
-            rotation: 0,
-            isSatisfied: false
-          });
-        }
-
-        // 難易度や確率に応じて2連樽！
-        if (Math.random() < 0.35 + difficulty * 0.25) {
-          const barrel2X = barrelX + 75;
-          const barrel2GroundY = this.getGroundYAt(barrel2X + 23) || localGroundY;
-          if (barrel2GroundY !== null) {
-            this.enemies.push({
-              x: barrel2X,
-              y: barrel2GroundY - 46,
-              width: 46,
-              height: 46,
-              vx: barrelSpeed,
-              type: 'barrel',
-              rotation: 0,
-              isSatisfied: false
-            });
-          }
-        }
-
-        // 金平糖を配置
-        if (Math.random() < 0.6) {
-          this.items.push({
-            x: x - 10,
-            y: localGroundY - 45,
-            width: 32,
-            height: 32,
-            type: 'konpeito'
-          });
-        }
-      } else if (pattern < 0.65) {
-        // パターン3: 急降下カラス（単羽または高低2羽編隊）+ 和菓子
-        const crowGroundY = this.getGroundYAt(x + 100 + 25) || localGroundY;
-        this.enemies.push({
-          x: x + 100,
-          y: crowGroundY - 165,
-          baseY: crowGroundY - 165,
-          width: 50,
-          height: 44,
-          vx: -2.3 - difficulty * 0.4,
-          type: 'crow',
-          animPhase: Math.random() * Math.PI * 2,
-          isSatisfied: false
-        });
-
-        // 2羽目のカラス（少し後方・高度違い）
-        if (Math.random() < 0.3 + difficulty * 0.25) {
-          this.enemies.push({
-            x: x + 180,
-            y: crowGroundY - 120,
-            baseY: crowGroundY - 120,
-            width: 50,
-            height: 44,
-            vx: -2.1 - difficulty * 0.3,
-            type: 'crow',
-            animPhase: Math.random() * Math.PI * 2 + 1.5,
-            isSatisfied: false
-          });
-        }
-
-        if (Math.random() < 0.5) {
-          this.items.push({
-            x: x + 30,
-            y: localGroundY - 110,
-            width: 34,
-            height: 34,
-            type: Math.random() < 0.35 ? rareWagashi[Math.floor(Math.random() * rareWagashi.length)] : 'konpeito'
-          });
-        }
-      } else if (pattern < 0.82) {
-        // パターン4: 塀（石垣）＋ 転がる樽 or タヌキ の複合罠
-        const wallH = 65 + Math.random() * 30;
-        this.walls.push({
-          x: x,
-          y: localGroundY - wallH,
-          width: 28,
-          height: wallH
-        });
-
-        // 塀の手前に樽、または奥にタヌキ
-        if (Math.random() < 0.5) {
-          // 塀の手前で跳ね返る樽
-          const barrelX = x + 80;
-          const barrelGroundY = this.getGroundYAt(barrelX + 23) || localGroundY;
-          if (barrelGroundY !== null) {
-            this.enemies.push({
-              x: barrelX,
-              y: barrelGroundY - 46,
-              width: 46,
-              height: 46,
-              vx: -2.8,
-              type: 'barrel',
-              rotation: 0,
-              isSatisfied: false
-            });
-          }
         } else {
-          // 塀の向こう側にタヌキ
-          const tanukiX = x + 60;
-          const tanukiGroundY = this.getGroundYAt(tanukiX + 26) || localGroundY;
+          this.spawnKonpeitoArc(x + 18, x + platW - 18, platY - 36, 26, 3);
+        }
+
+        // 地上の安全な場所にいたずらタヌキを配置
+        const tanukiX = x + platW + 24;
+        if (this.isGroundSolidRange(tanukiX - 10, tanukiX + 70) && !this.hasObstacleNear(tanukiX, 70)) {
+          const tanukiGroundY = this.getGroundYAt(tanukiX + 26);
           if (tanukiGroundY !== null) {
             this.enemies.push({
               x: tanukiX,
               y: tanukiGroundY - 52,
               width: 52,
               height: 52,
-              minX: tanukiX - 40,
-              maxX: tanukiX + 90,
-              vx: -1.1,
+              minX: tanukiX - 45,
+              maxX: tanukiX + 115,
+              vx: -1.0 - difficulty * 0.35,
+              hopOffsetY: 0,
+              hopVy: 0,
+              hopCooldown: 60 + Math.floor(Math.random() * 60),
               type: 'tanuki',
-              isSatisfied: false
+              isSatisfied: false,
+              nearMissAwarded: false
             });
           }
         }
+      } else if (pattern < 0.42) {
+        // パターン2: 転がる酒樽（単発 or 中盤以降はテンポ良い2連樽）+ 飛び越え金平糖アーチ
+        const barrelSpeed = -2.2 - difficulty * 0.85;
+        const barrelX = x + 40;
+        if (this.isGroundSolidRange(barrelX - 20, barrelX + 120)) {
+          const barrelGroundY = this.getGroundYAt(barrelX + 23);
+          if (barrelGroundY !== null) {
+            this.enemies.push({
+              x: barrelX,
+              y: barrelGroundY - 46,
+              width: 46,
+              height: 46,
+              vx: barrelSpeed,
+              type: 'barrel',
+              rotation: 0,
+              isSatisfied: false,
+              nearMissAwarded: false
+            });
+          }
 
-        // 塀の上に和菓子
-        if (Math.random() < 0.55) {
-          this.items.push({
-            x: x - 4,
-            y: localGroundY - wallH - 42,
-            width: 36,
-            height: 36,
-            type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)]
+          // 中盤以降、リズムよく2連樽（間隔を十分空けてジャンプ着地→再ジャンプが気持ちよく決まる距離）
+          if (isMidOrLater && Math.random() < 0.25 + difficulty * 0.25) {
+            const barrel2X = barrelX + 105;
+            const barrel2GroundY = this.getGroundYAt(barrel2X + 23);
+            if (barrel2GroundY !== null) {
+              this.enemies.push({
+                x: barrel2X,
+                y: barrel2GroundY - 46,
+                width: 46,
+                height: 46,
+                vx: barrelSpeed,
+                type: 'barrel',
+                rotation: 0,
+                isSatisfied: false,
+                nearMissAwarded: false
+              });
+            }
+          }
+
+          // 樽を飛び越える軌道に金平糖アーチ
+          this.spawnKonpeitoArc(x - 10, x + 90, localGroundY - 58, 52, 3);
+        }
+      } else if (pattern < 0.60) {
+        // パターン3: 急降下カラス（単羽 or 中盤以降は高低2羽）+ 空中和菓子
+        const crowX = x + 90;
+        const crowGroundY = this.getGroundYAt(crowX + 25) || localGroundY;
+        this.enemies.push({
+          x: crowX,
+          y: crowGroundY - 155,
+          baseY: crowGroundY - 155,
+          width: 50,
+          height: 44,
+          vx: -1.9 - difficulty * 0.55,
+          type: 'crow',
+          animPhase: Math.random() * Math.PI * 2,
+          isSatisfied: false,
+          nearMissAwarded: false
+        });
+
+        // 2羽目のカラス（中盤以降、避けやすい間隔と高度差で配置）
+        if (isMidOrLater && Math.random() < 0.22 + difficulty * 0.25) {
+          this.enemies.push({
+            x: crowX + 125,
+            y: crowGroundY - 110,
+            baseY: crowGroundY - 110,
+            width: 50,
+            height: 44,
+            vx: -1.8 - difficulty * 0.45,
+            type: 'crow',
+            animPhase: Math.random() * Math.PI * 2 + 1.8,
+            isSatisfied: false,
+            nearMissAwarded: false
           });
         }
-      } else if (pattern < 0.88) {
-        // パターン5: 空中瓦渡り（左右に揺れる動く足場 ＋ 静止足場の連携）+ 高空の和菓子
-        const plat1W = 100 + Math.random() * 30;
-        const plat1Y = localGroundY - 110;
+
+        // カラスの少し手前に和菓子
+        this.items.push({
+          x: x + 25,
+          y: localGroundY - 115,
+          width: 36,
+          height: 36,
+          type: Math.random() < 0.45 ? this.pickRareWagashi() : 'konpeito'
+        });
+      } else if (pattern < 0.74) {
+        // パターン4: 石垣の塀 + 敵（安全チェック付き）+ 塀の上にご褒美和菓子
+        if (this.isGroundSolidRange(x - 30, x + 130)) {
+          const wallH = 62 + Math.random() * 28;
+          this.walls.push({
+            x: x,
+            y: localGroundY - wallH,
+            width: 28,
+            height: wallH
+          });
+
+          // 塀の向こう側にタヌキまたは転がる樽
+          if (Math.random() < 0.55) {
+            const tanukiX = x + 65;
+            const tanukiGroundY = this.getGroundYAt(tanukiX + 26);
+            if (tanukiGroundY !== null) {
+              this.enemies.push({
+                x: tanukiX,
+                y: tanukiGroundY - 52,
+                width: 52,
+                height: 52,
+                minX: x + 36,
+                maxX: tanukiX + 95,
+                vx: -1.0 - difficulty * 0.25,
+                hopOffsetY: 0,
+                hopVy: 0,
+                hopCooldown: 70 + Math.floor(Math.random() * 50),
+                type: 'tanuki',
+                isSatisfied: false,
+                nearMissAwarded: false
+              });
+            }
+          } else {
+            const barrelX = x + 95;
+            const barrelGroundY = this.getGroundYAt(barrelX + 23);
+            if (barrelGroundY !== null) {
+              this.enemies.push({
+                x: barrelX,
+                y: barrelGroundY - 46,
+                width: 46,
+                height: 46,
+                vx: -2.3 - difficulty * 0.5,
+                type: 'barrel',
+                rotation: 0,
+                isSatisfied: false,
+                nearMissAwarded: false
+              });
+            }
+          }
+
+          // 塀の上に名物和菓子
+          this.items.push({
+            x: x - 5,
+            y: localGroundY - wallH - 44,
+            width: 38,
+            height: 38,
+            type: this.pickRareWagashi()
+          });
+        }
+      } else if (pattern < 0.83) {
+        // パターン5: 空中瓦渡り（2段の瓦屋根でお宝ルート）
+        const plat1W = 110 + Math.random() * 25;
+        const plat1Y = localGroundY - 105;
+        const isPlat1Moving = isMidOrLater && Math.random() < 0.55;
         const plat1 = {
           baseX: x,
           x: x,
           y: plat1Y,
           width: plat1W,
           height: 18,
-          isMoving: true, // 左右に揺れる動く足場
-          moveRange: 55,
-          moveSpeed: 0.038,
+          isMoving: isPlat1Moving,
+          moveRange: isPlat1Moving ? 42 : 0,
+          moveSpeed: 0.032,
           movePhase: 0,
           dx: 0
         };
         this.platforms.push(plat1);
 
-        const plat2W = 110 + Math.random() * 30;
-        const plat2Y = localGroundY - 170;
+        const plat2W = 120 + Math.random() * 25;
+        const plat2Y = localGroundY - 168;
         const plat2 = {
-          baseX: x + 130,
-          x: x + 130,
+          baseX: x + 135,
+          x: x + 135,
           y: plat2Y,
           width: plat2W,
           height: 18,
-          isMoving: false, // 静止した足場
+          isMoving: false,
           moveRange: 0,
           moveSpeed: 0,
           movePhase: 0,
@@ -802,121 +947,138 @@ class Game {
         };
         this.platforms.push(plat2);
 
-        // 2つ目の足場の上に貴重な和菓子
-        this.items.push({
-          x: x + 130 + plat2W / 2 - 18,
-          y: plat2Y - 42,
-          width: 38,
-          height: 38,
-          type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)]
-        });
-
-        // 1つ目の動く足場の上に金平糖（足場と同期して揺れる）
         this.items.push({
           x: x + plat1W / 2 - 16,
           y: plat1Y - 40,
           width: 32,
           height: 32,
           type: 'konpeito',
-          platformRef: plat1
+          platformRef: isPlat1Moving ? plat1 : null
         });
-
-        // 地上には転がる樽
-        const barrelGroundY = this.getGroundYAt(x + 100) || localGroundY;
-        this.enemies.push({
-          x: x + 100,
-          y: barrelGroundY - 46,
-          width: 46,
-          height: 46,
-          vx: -2.6,
-          type: 'barrel',
-          rotation: 0,
-          isSatisfied: false
-        });
-      } else if (pattern < 0.95) {
-        // パターン6: 立体連携（地上樽 ＋ 上空カラスの上下挟み撃ち）
-        const barrelGroundY = this.getGroundYAt(x + 50) || localGroundY;
-        this.enemies.push({
-          x: x + 50,
-          y: barrelGroundY - 46,
-          width: 46,
-          height: 46,
-          vx: -2.6,
-          type: 'barrel',
-          rotation: 0,
-          isSatisfied: false
-        });
-
-        const crowGroundY = this.getGroundYAt(x + 130) || localGroundY;
-        this.enemies.push({
-          x: x + 130,
-          y: crowGroundY - 170,
-          baseY: crowGroundY - 170,
-          width: 50,
-          height: 44,
-          vx: -2.0,
-          type: 'crow',
-          animPhase: Math.random() * Math.PI * 2,
-          isSatisfied: false
-        });
-
-        // 金平糖
         this.items.push({
-          x: x - 20,
-          y: localGroundY - 50,
-          width: 32,
-          height: 32,
-          type: 'konpeito'
-        });
-      } else {
-        // パターン7: 餅つきの大臼（トランポリン） + 高空の貴重な和菓子 + 上空カラス
-        this.springs.push({
-          x: x,
-          y: localGroundY - 36,
-          width: 52,
-          height: 36
+          x: x + 135 + plat2W / 2 - 19,
+          y: plat2Y - 44,
+          width: 38,
+          height: 38,
+          type: this.pickRareWagashi()
         });
 
-        // 大臼で跳んだ高空に貴重な和菓子
-        this.items.push({
-          x: x + 8,
-          y: localGroundY - 210,
-          width: 40,
-          height: 40,
-          type: rareWagashi[Math.floor(Math.random() * rareWagashi.length)]
-        });
+        // 地上は安全な範囲なら転がる樽
+        if (this.isGroundSolidRange(x + 70, x + 160)) {
+          const barrelGroundY = this.getGroundYAt(x + 110);
+          if (barrelGroundY !== null) {
+            this.enemies.push({
+              x: x + 110,
+              y: barrelGroundY - 46,
+              width: 46,
+              height: 46,
+              vx: -2.2 - difficulty * 0.45,
+              type: 'barrel',
+              rotation: 0,
+              isSatisfied: false,
+              nearMissAwarded: false
+            });
+          }
+        }
+      } else if (pattern < 0.90 && isMidOrLater) {
+        // パターン6: 立体連携（地上樽＋上空カラスのドキドキ連携）
+        if (this.isGroundSolidRange(x + 20, x + 130)) {
+          const barrelGroundY = this.getGroundYAt(x + 50);
+          if (barrelGroundY !== null) {
+            this.enemies.push({
+              x: x + 50,
+              y: barrelGroundY - 46,
+              width: 46,
+              height: 46,
+              vx: -2.3 - difficulty * 0.45,
+              type: 'barrel',
+              rotation: 0,
+              isSatisfied: false,
+              nearMissAwarded: false
+            });
+          }
 
-        // 高空にカラスがいて、大ジャンプで踏みつけ撃破できるチャンス！
-        if (Math.random() < 0.6) {
+          const crowGroundY = this.getGroundYAt(x + 160) || localGroundY;
           this.enemies.push({
-            x: x + 40,
-            y: localGroundY - 210,
-            baseY: localGroundY - 210,
+            x: x + 160,
+            y: crowGroundY - 175,
+            baseY: crowGroundY - 175,
             width: 50,
             height: 44,
-            vx: -1.6,
+            vx: -1.85 - difficulty * 0.35,
             type: 'crow',
-            animPhase: 0,
-            isSatisfied: false
+            animPhase: Math.random() * Math.PI * 2,
+            isSatisfied: false,
+            nearMissAwarded: false
           });
+
+          this.spawnKonpeitoArc(x - 15, x + 75, localGroundY - 52, 46, 3);
         }
+      } else if (pattern < 0.95) {
+        // パターン7: 餅つきの大臼 + 高空の名物和菓子 + 踏みつけチャンスのカラス
+        if (this.isGroundSolidRange(x - 20, x + 80)) {
+          this.springs.push({
+            x: x,
+            y: localGroundY - 36,
+            width: 56,
+            height: 36
+          });
+          this.spawnKonpeitoArc(x + 20, x + 180, localGroundY - 120, 95, 4);
+          this.items.push({
+            x: x + 82,
+            y: localGroundY - 225,
+            width: 40,
+            height: 40,
+            type: this.pickRareWagashi()
+          });
+
+          if (Math.random() < 0.5) {
+            this.enemies.push({
+              x: x + 125,
+              y: localGroundY - 205,
+              baseY: localGroundY - 205,
+              width: 50,
+              height: 44,
+              vx: -1.5,
+              type: 'crow',
+              animPhase: 0,
+              isSatisfied: false,
+              nearMissAwarded: false
+            });
+          }
+        }
+      } else {
+        // パターン8: ご褒美の和菓子ウェーブ街道（緊張と緩和の「ほっと一息＆コンボ回復」ゾーン！）
+        this.spawnKonpeitoArc(x, x + 160, localGroundY - 46, 58, 5);
+        this.items.push({
+          x: x + 62,
+          y: localGroundY - 120,
+          width: 38,
+          height: 38,
+          type: this.pickRareWagashi()
+        });
       }
     }
   }
 
   // =========================================================================
-  // パワーアップ適用
+  // パワーアップ適用（コンボ倍率・重複ボーナス・フィーバー加速）
   // =========================================================================
   applyPowerup(type) {
-    this.score += 250;
     this.itemsCollected++;
     this.combo++;
-    this.comboTimer = 240; // 約4秒
+    this.comboTimer = 260; // 約4.3秒
 
-    // フィーバーゲージ蓄積（程よい上昇速度に調整）
-    this.feverGauge = Math.min(100, this.feverGauge + (type === 'konpeito' ? 8 : 15));
-    if (this.feverGauge >= 100 && !this.isFever) {
-      this.startFever();
+    const mult = this.getComboMultiplier() * (this.isFever ? 2 : 1);
+    const basePts = Math.round(200 * mult);
+    this.score += basePts;
+
+    // フィーバーゲージ蓄積
+    if (!this.isFever) {
+      this.feverGauge = Math.min(100, this.feverGauge + (type === 'konpeito' ? 7 : 15));
+      if (this.feverGauge >= 100) {
+        this.startFever();
+      }
     }
 
     soundEngine.playCollectItem();
@@ -926,34 +1088,55 @@ class Game {
         this.player.hasDash = true;
         this.player.dashTimer = 360; // 6秒間
         this.player.invincible = true;
-        this.player.invincibleTimer = 360;
+        this.player.invincibleTimer = Math.max(this.player.invincibleTimer, 405); // 終了後も0.75秒の安全無敵
         soundEngine.playPowerup();
-        this.addFloatingText(this.player.worldX, this.player.y - 20, '🍡 団子ダッシュ!!', '#ffc857');
+        this.addFloatingText(this.player.worldX, this.player.y - 22, '🍡 団子ダッシュ!!', '#ffc857');
         break;
 
-      case 'daifuku':
-        this.lives = Math.min(3, this.lives + 1);
-        this.player.hasShield = true;
-        soundEngine.playPowerup();
-        this.addFloatingText(this.player.worldX, this.player.y - 20, '🍵 お茶の加護 (シールド)', '#67923d');
+      case 'daifuku': {
+        const hadFullLifeAndShield = (this.lives >= 3 && this.player.hasShield);
+        if (hadFullLifeAndShield) {
+          const bonus = Math.round(600 * mult);
+          this.score += bonus;
+          if (!this.isFever) this.feverGauge = Math.min(100, this.feverGauge + 20);
+          soundEngine.playPowerup();
+          this.addFloatingText(this.player.worldX, this.player.y - 22, `🍵 極上抹茶! +${bonus}`, '#9ef08c');
+        } else {
+          this.lives = Math.min(3, this.lives + 1);
+          this.player.hasShield = true;
+          soundEngine.playPowerup();
+          this.addFloatingText(this.player.worldX, this.player.y - 22, '🍵 お茶の加護 (回復＆盾)', '#67923d');
+        }
         break;
+      }
 
       case 'dorayaki':
-        this.player.hasDoubleJump = true;
-        soundEngine.playPowerup();
-        this.addFloatingText(this.player.worldX, this.player.y - 20, '🥮 2段ジャンプ解禁!!', '#ffaa00');
+        if (this.player.hasDoubleJump) {
+          // 既に2段ジャンプ所持中はふわふわ滞空ボーナス＋スコアUP！
+          this.player.floatTimer = 420; // 7秒間ふわふわ滞空
+          const bonus = Math.round(450 * mult);
+          this.score += bonus;
+          soundEngine.playPowerup();
+          this.addFloatingText(this.player.worldX, this.player.y - 22, `🥮 ふわふわ強化! +${bonus}`, '#ffd166');
+        } else {
+          this.player.hasDoubleJump = true;
+          soundEngine.playPowerup();
+          this.addFloatingText(this.player.worldX, this.player.y - 22, '🥮 2段ジャンプ解禁!!', '#ffaa00');
+        }
         break;
 
       case 'sakuramochi':
-        this.player.sakuramochiStock = Math.min(6, this.player.sakuramochiStock + 3);
+        this.player.sakuramochiStock = Math.min(8, this.player.sakuramochiStock + 3);
         soundEngine.playPowerup();
-        this.addFloatingText(this.player.worldX, this.player.y - 20, '🌸 桜餅シュート+3', '#ff758c');
+        this.addFloatingText(this.player.worldX, this.player.y - 22, '🌸 桜餅シュート+3', '#ff758c');
         break;
 
-      case 'konpeito':
-        this.score += 300 * (this.isFever ? 2 : 1);
-        this.addFloatingText(this.player.worldX, this.player.y - 20, '+300点!', '#ffebbe');
+      case 'konpeito': {
+        const pts = Math.round(250 * mult);
+        this.score += pts;
+        this.addFloatingText(this.player.worldX, this.player.y - 18, `+${pts}`, '#ffebbe');
         break;
+      }
     }
   }
 
@@ -968,11 +1151,38 @@ class Game {
   endFever() {
     this.isFever = false;
     this.feverGauge = 0;
+    // フィーバー終了直後に一瞬だけ安全無敵を付与して事故防止
+    this.player.invincible = true;
+    this.player.invincibleTimer = Math.max(this.player.invincibleTimer, 45);
     soundEngine.playBGM('game');
   }
 
+  // 宿場町到達チェック（達成感＆お茶休憩ボーナス）
+  checkStationArrival() {
+    const stations = uiManager.stations;
+    for (let i = this.lastStationIndex + 1; i < stations.length; i++) {
+      if (this.distance >= stations[i].dist) {
+        this.lastStationIndex = i;
+        const stationName = stations[i].name;
+        this.score += 500;
+        this.player.sakuramochiStock = Math.min(8, this.player.sakuramochiStock + 1);
+        let bonusText = 'お茶休憩ボーナス！ 桜餅+1＆+500点';
+        // 残り体力1のピンチで宿場町に辿り着いたら茶屋の癒し回復！
+        if (this.lives === 1) {
+          this.lives = 2;
+          bonusText = '茶屋の癒し！ 体力+1＆桜餅+1＆+500点';
+        }
+        soundEngine.playStationArrive();
+        uiManager.triggerStationBanner(stationName, bonusText);
+        for (let k = 0; k < 6; k++) {
+          this.addEffect(this.player.worldX + (Math.random() - 0.5) * 60, this.player.y + (Math.random() - 0.5) * 50, 'sparkle');
+        }
+      }
+    }
+  }
+
   // =========================================================================
-  // 被弾ダメージ処理（確実にダメージ＆ノックバック＆ライフ減少）
+  // 被弾ダメージ処理（手応えあるノックバック・ヒットストップ・画面シェイク）
   // =========================================================================
   takeDamage() {
     if (this.player.invincible) return;
@@ -981,25 +1191,31 @@ class Game {
       // 抹茶シールドで1回ダメージガード
       this.player.hasShield = false;
       this.player.invincible = true;
-      this.player.invincibleTimer = 90;
+      this.player.invincibleTimer = 100;
+      this.hitStopTimer = 3;
+      this.triggerScreenShake(10, 4);
       soundEngine.playDamage();
-      this.addFloatingText(this.player.worldX, this.player.y - 20, '🛡️ シールド破損!', '#67923d');
+      this.addFloatingText(this.player.worldX, this.player.y - 20, '🛡️ 抹茶シールド防衛!', '#8ce06c');
       return;
     }
 
     // ライフを1減らす
     this.lives = Math.max(0, this.lives - 1);
     soundEngine.playDamage();
-    
+    this.hitStopTimer = 4;
+    this.triggerScreenShake(14, 6);
+
     // ノックバック＆被弾状態
     this.player.state = 'hit';
     this.player.vy = -7.5;
-    this.player.vx = this.player.facingRight ? -4.5 : 4.5;
+    this.player.vx = this.player.facingRight ? -4.2 : 4.2;
+    this.player.knockbackTimer = 14;
+    this.player.springBoostTimer = 0;
     this.player.invincible = true;
-    this.player.invincibleTimer = 110; // 約1.8秒間無敵点滅
+    this.player.invincibleTimer = 120; // 約2.0秒間無敵点滅
     this.combo = 0;
 
-    this.addFloatingText(this.player.worldX, this.player.y - 20, '💥 被弾! 痛っ!', '#ff4444');
+    this.addFloatingText(this.player.worldX, this.player.y - 20, '💥 痛っ! 気をつけて!', '#ff6b6b');
 
     if (this.lives <= 0) {
       this.gameOver();
@@ -1112,14 +1328,39 @@ class Game {
       return;
     }
 
+    // 画面シェイク減衰
+    if (this.shakeTimer > 0) {
+      this.shakeTimer--;
+      if (this.shakeTimer <= 0) this.shakeMagnitude = 0;
+    }
+
+    // ヒットストップ（一瞬の手応え硬直）
+    if (this.hitStopTimer > 0) {
+      this.hitStopTimer--;
+      return;
+    }
+
     // プレイヤーの左右入力移動
     let moveDir = 0;
     if (this.keys.left) moveDir -= 1;
     if (this.keys.right) moveDir += 1;
 
-    const currentSpeed = this.player.hasDash ? this.player.baseSpeed * 1.85 : this.player.baseSpeed;
+    const currentSpeed = this.player.hasDash ? this.player.baseSpeed * 1.75 : this.player.baseSpeed;
 
-    if (moveDir !== 0) {
+    if (this.player.knockbackTimer > 0) {
+      this.player.knockbackTimer--;
+      this.player.vx *= 0.90;
+    } else if (this.player.springBoostTimer > 0) {
+      // 大臼ジャンプ後の前進ブースト維持（左入力時は減速調整も可）
+      this.player.springBoostTimer--;
+      if (moveDir < 0) {
+        this.player.vx = -currentSpeed * 0.75;
+        this.player.facingRight = false;
+      } else {
+        this.player.vx = Math.max(currentSpeed, 6.4);
+        this.player.facingRight = true;
+      }
+    } else if (moveDir !== 0) {
       this.player.vx = moveDir * currentSpeed;
       this.player.facingRight = moveDir > 0;
     } else {
@@ -1141,6 +1382,7 @@ class Game {
     if (currentDistM > this.distance) {
       this.score += Math.floor((currentDistM - this.distance) * 5) * (this.isFever ? 2 : 1);
       this.distance = currentDistM;
+      this.checkStationArrival();
     }
 
     // カメラ位置の更新（主人公の進行に合わせて追従。止まれば背景も止まる）
@@ -1169,9 +1411,15 @@ class Game {
       }
     });
 
-    // 重力・垂直物理
-    this.player.vy += 0.68;
+    // コヨーテタイム & 先行入力タイマーの更新
+    const wasGrounded = this.player.isGrounded;
+    if (this.player.jumpBufferTimer > 0) this.player.jumpBufferTimer--;
+
+    // 重力・垂直物理（ふわふわ滞空ボーナス中は落下速度が緩やかに！）
+    const gravity = (this.player.floatTimer > 0 && this.player.vy > 0) ? 0.42 : 0.66;
+    this.player.vy = Math.min(16, this.player.vy + gravity);
     this.player.y += this.player.vy;
+    this.player.isGrounded = false;
 
     // 地面判定（地形セグメントベース）
     const playerCenterX = this.player.worldX + this.player.width / 2;
@@ -1179,25 +1427,31 @@ class Game {
 
     if (localGround === null) {
       // 穴の上: 地面なし → 落下し続ける
-      // 画面外まで落下したらダメージ＆復帰
+      // 画面外まで落下したら最後に安全だった地面へ確実に復帰（連続落下防止）
       if (this.player.y > this.baseGroundY + 100) {
-        // 最後に安全だった地面に復帰
-        const safeX = this.player.worldX - 150;
-        const safeGround = this.getGroundYAt(safeX) || this.baseGroundY;
-        this.player.worldX = safeX;
-        this.player.y = safeGround - this.player.height - 20;
+        this.player.worldX = this.player.lastSafeX;
+        this.player.y = this.player.lastSafeY - 12;
         this.player.vy = 0;
         this.player.vx = 0;
+        this.player.springBoostTimer = 0;
         this.player.isGrounded = false;
         this.takeDamage();
       }
     } else {
       // 通常の地面判定
-      if (this.player.y >= localGround - this.player.height) {
+      if (this.player.y >= localGround - this.player.height && this.player.vy >= 0) {
         this.player.y = localGround - this.player.height;
         this.player.vy = 0;
         this.player.isGrounded = true;
         this.player.canDoubleJump = this.player.hasDoubleJump;
+        this.player.springBoostTimer = 0;
+        this.stompCombo = 0;
+
+        // 穴の縁から少し内側の安全な地面座標を記録
+        if (this.getGroundYAt(playerCenterX - 36) !== null && this.getGroundYAt(playerCenterX + 36) !== null) {
+          this.player.lastSafeX = this.player.worldX;
+          this.player.lastSafeY = localGround - this.player.height;
+        }
       }
     }
 
@@ -1215,11 +1469,13 @@ class Game {
         pTop < wall.y + wall.height
       ) {
         // 上から乗っている場合 → 足場として着地
-        if (this.player.vy >= 0 && pBottom <= wall.y + 20) {
+        if (this.player.vy >= 0 && pBottom <= wall.y + 22) {
           this.player.y = wall.y - this.player.height;
           this.player.vy = 0;
           this.player.isGrounded = true;
           this.player.canDoubleJump = this.player.hasDoubleJump;
+          this.player.springBoostTimer = 0;
+          this.stompCombo = 0;
         } else {
           // 横からぶつかった → 押し戻す
           if (this.player.vx > 0) {
@@ -1235,16 +1491,18 @@ class Game {
     // 足場（プラットフォーム）着地判定
     this.platforms.forEach(plat => {
       if (
-        this.player.worldX + this.player.width * 0.8 > plat.x &&
-        this.player.worldX + this.player.width * 0.2 < plat.x + plat.width &&
+        this.player.worldX + this.player.width * 0.82 > plat.x &&
+        this.player.worldX + this.player.width * 0.18 < plat.x + plat.width &&
         this.player.y + this.player.height >= plat.y &&
-        this.player.y + this.player.height <= plat.y + 20 &&
+        this.player.y + this.player.height <= plat.y + 22 &&
         this.player.vy >= 0
       ) {
         this.player.y = plat.y - this.player.height;
         this.player.vy = 0;
         this.player.isGrounded = true;
         this.player.canDoubleJump = this.player.hasDoubleJump;
+        this.player.springBoostTimer = 0;
+        this.stompCombo = 0;
         // 動く足場に乗っているときはプレイヤーも一緒に左右移動
         if (plat.isMoving && plat.dx) {
           this.player.worldX += plat.dx;
@@ -1252,14 +1510,28 @@ class Game {
       }
     });
 
+    // コヨーテタイム更新＆着地時の先行ジャンプ実行
+    if (this.player.isGrounded) {
+      this.player.coyoteTimer = 7;
+      if (this.player.jumpBufferTimer > 0) {
+        this.handleJump();
+      }
+    } else if (wasGrounded && this.player.vy >= 0) {
+      // 崖から自然に踏み出した直後はコヨーテタイム維持
+      this.player.coyoteTimer = 7;
+    } else if (this.player.coyoteTimer > 0) {
+      this.player.coyoteTimer--;
+    }
+
     // プレイヤーのアニメーション状態決定
-    if (!this.player.isGrounded) {
+    if (this.player.knockbackTimer > 0) {
+      this.player.state = 'hit';
+    } else if (!this.player.isGrounded) {
       this.player.state = 'jump';
     } else if (Math.abs(this.player.vx) > 0.3) {
       this.player.state = this.player.hasDash ? 'run' : 'walk';
       this.player.animTimer += this.player.hasDash ? 0.32 : 0.20;
     } else {
-      // 静止時は Idle（待機モーション）
       this.player.state = 'idle';
       this.player.animTimer += 0.08;
     }
@@ -1273,6 +1545,18 @@ class Game {
     if (this.isFever) {
       this.feverTimer--;
       this.feverGauge = (this.feverTimer / 480) * 100;
+      // フィーバー中は定期的にお茶会ご褒美の金平糖が前方空からふわりと出現！
+      if (this.feverTimer % 55 === 0 && this.feverTimer > 30) {
+        const dropX = this.player.worldX + 160 + Math.random() * 140;
+        const dropGroundY = this.getGroundYAt(dropX) || this.baseGroundY;
+        this.items.push({
+          x: dropX,
+          y: Math.max(220, dropGroundY - 120 - Math.random() * 90),
+          width: 32,
+          height: 32,
+          type: 'konpeito'
+        });
+      }
       if (this.feverTimer <= 0) this.endFever();
     }
 
@@ -1281,67 +1565,88 @@ class Game {
       if (this.player.dashTimer <= 0) this.player.hasDash = false;
     }
 
+    if (this.player.floatTimer > 0) {
+      this.player.floatTimer--;
+    }
+
     if (this.player.invincible) {
       this.player.invincibleTimer--;
       if (this.player.invincibleTimer <= 0) this.player.invincible = false;
     }
 
-    // 大臼（トランポリン）判定
+    // 大臼（トランポリン）判定（上から飛び乗っても、地上から駆け込んでも気持ちよく大跳躍！）
     this.springs.forEach(spring => {
       if (
-        this.player.worldX + this.player.width > spring.x &&
-        this.player.worldX < spring.x + spring.width &&
-        this.player.y + this.player.height >= spring.y &&
-        this.player.y + this.player.height <= spring.y + 24 &&
+        this.player.worldX + this.player.width + 4 > spring.x &&
+        this.player.worldX - 4 < spring.x + spring.width &&
+        this.player.y + this.player.height >= spring.y - 6 &&
+        this.player.y + this.player.height <= spring.y + spring.height + 6 &&
         this.player.vy >= 0
       ) {
-        this.player.vy = -20.5; // スーパージャンプ（大峡谷を飛び越える超跳躍）
-        this.player.vx = Math.max(this.player.vx, 6.2); // 前進推進力アシスト
+        this.player.vy = -20.5; // 大峡谷を気持ちよく飛び越える超跳躍
+        this.player.vx = Math.max(this.player.vx, 6.4);
+        this.player.springBoostTimer = 46; // 前進ブーストを維持して確実に大峡谷突破！
         this.player.isGrounded = false;
+        this.player.coyoteTimer = 0;
         this.player.canDoubleJump = this.player.hasDoubleJump;
+        this.triggerScreenShake(5, 2.5);
         soundEngine.playSpring();
         this.addEffect(spring.x + spring.width / 2, spring.y, 'sparkle');
         this.addFloatingText(spring.x + spring.width / 2, spring.y - 25, '✨ 大跳躍！', '#ffd166');
       }
     });
 
-    // アイテム判定＆マグネット
-    this.items.forEach((item, idx) => {
-      // フィーバー時のマグネット効果
+    // アイテム判定＆マグネット（逆順ループでsplice安全処理）
+    for (let idx = this.items.length - 1; idx >= 0; idx--) {
+      const item = this.items[idx];
+      // ドロップアイテムの軽い物理（敵満足ドロップの金平糖など）
+      if (item.vx || item.vy !== undefined) {
+        item.x += (item.vx || 0);
+        item.vy = (item.vy || 0) + 0.35;
+        item.y += item.vy;
+        const gy = this.getGroundYAt(item.x + item.width / 2);
+        if (gy !== null && item.y + item.height >= gy - 8) {
+          item.y = gy - item.height - 8;
+          item.vx = 0;
+          item.vy = undefined;
+        }
+      }
+
+      // フィーバー時のマグネット効果（広範囲に吸い寄せ！）
       if (this.isFever) {
         const dx = (this.player.worldX + this.player.width / 2) - (item.x + item.width / 2);
         const dy = (this.player.y + this.player.height / 2) - (item.y + item.height / 2);
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 320) {
-          item.x += (dx / dist) * 7.5;
-          item.y += (dy / dist) * 7.5;
+        if (dist > 1 && dist < 360) {
+          item.x += (dx / dist) * 8.5;
+          item.y += (dy / dist) * 8.5;
         }
       }
 
-      // 取得判定
+      // 取得判定（少し広めで気持ちよく回収）
       if (
-        this.player.worldX + this.player.width > item.x &&
-        this.player.worldX < item.x + item.width &&
-        this.player.y + this.player.height > item.y &&
-        this.player.y < item.y + item.height
+        this.player.worldX + this.player.width + 4 > item.x &&
+        this.player.worldX - 4 < item.x + item.width &&
+        this.player.y + this.player.height + 4 > item.y &&
+        this.player.y - 4 < item.y + item.height
       ) {
         this.applyPowerup(item.type);
         this.items.splice(idx, 1);
       }
-    });
+    }
 
     // 和菓子シュート（投擲弾）更新
     for (let pIdx = this.projectiles.length - 1; pIdx >= 0; pIdx--) {
       const proj = this.projectiles[pIdx];
       proj.x += proj.vx;
       proj.y += proj.vy;
-      proj.vy += 0.35; // 弧を描く重力加速度
+      proj.vy += 0.26; // 当てやすい緩やかな放物線
       proj.rotation += (proj.vx >= 0 ? 1 : -1) * 0.18;
 
       let hit = false;
 
       // 敵キャラクターとの当たり判定
-      const pRadius = proj.size * 0.4;
+      const pRadius = proj.size * 0.48;
       for (let eIdx = 0; eIdx < this.enemies.length; eIdx++) {
         const enemy = this.enemies[eIdx];
         if (
@@ -1353,10 +1658,22 @@ class Game {
         ) {
           enemy.isSatisfied = true;
           enemy.satisfiedTime = Date.now();
-          this.score += 500;
+          const pts = Math.round(500 * this.getComboMultiplier() * (this.isFever ? 2 : 1));
+          this.score += pts;
+          if (!this.isFever) this.feverGauge = Math.min(100, this.feverGauge + 10);
           soundEngine.playEnemySatisfied();
-          this.addFloatingText(enemy.x, enemy.y - 20, '🌸 美味しい！+500点', '#ff69b4');
+          this.addFloatingText(enemy.x, enemy.y - 20, `🌸 美味しい！+${pts}`, '#ff69b4');
           this.addEffect(proj.x, proj.y, 'sparkle');
+          // 満足した敵から金平糖のお返しがポンッと飛び出す！
+          this.items.push({
+            x: enemy.x + enemy.width / 2 - 16,
+            y: enemy.y,
+            width: 32,
+            height: 32,
+            type: 'konpeito',
+            vx: proj.vx >= 0 ? 1.2 : -1.2,
+            vy: -6.5
+          });
           hit = true;
           break;
         }
@@ -1394,17 +1711,15 @@ class Game {
       }
     }
 
-    // 敵キャラクター更新＆精密な当たり判定
+    // 敵キャラクター更新＆精密な当たり判定＋ヒヤリ回避判定
     this.enemies.forEach((enemy) => {
-      // 満足（浄化済み）の場合は退場アニメーション中なので通常移動・接地物理はスキップ
       if (enemy.isSatisfied) return;
 
-      // 画面の視界近く（カメラ右端+140px以内）に入るまでは待機（画面外での先行逃亡・反転を防止）
+      // 画面の視界近く（カメラ右端+140px以内）に入るまでは待機
       if (!enemy.activated) {
         if (enemy.x <= this.cameraX + this.width + 140) {
           enemy.activated = true;
         } else {
-          // 画面外待機中は地面の高さのみ同期してスタンバイ
           const groundY = this.getGroundYAt(enemy.x + enemy.width / 2);
           if (groundY !== null && enemy.type !== 'crow') {
             enemy.y = groundY - enemy.height;
@@ -1422,24 +1737,16 @@ class Game {
         const nextGroundY = this.getGroundYAt(centerNextX);
         const currentGroundY = this.getGroundYAt(enemy.x + enemy.width / 2);
 
-        // パトロール反転条件:
         let shouldTurn = false;
-
-        // 1. 指定された巡回範囲外
         if (enemy.minX && enemy.maxX) {
-          if (nextX < enemy.minX || nextX > enemy.maxX) {
-            shouldTurn = true;
-          }
+          if (nextX < enemy.minX || nextX > enemy.maxX) shouldTurn = true;
         }
-        // 2. 前方が穴（崖）の場合、落ちないように反転（すでに穴に落ちている場合を除く）
         if (currentGroundY !== null && (frontGroundY === null || nextGroundY === null)) {
           shouldTurn = true;
         }
-        // 3. 前方に高すぎる段差（登れない崖）がある場合反転
         if (frontGroundY !== null && currentGroundY !== null && (currentGroundY - frontGroundY > 40)) {
           shouldTurn = true;
         }
-        // 4. 壁（石垣）に衝突した場合反転
         this.walls.forEach(wall => {
           if (
             nextX + enemy.width > wall.x &&
@@ -1458,13 +1765,31 @@ class Game {
           enemy.x = nextX;
         }
 
-        // 接地・高度更新
+        // タヌキの愛嬌あるぴょん跳ねアクション
+        if (enemy.hopOffsetY === undefined) enemy.hopOffsetY = 0;
+        if (enemy.hopVy === undefined) enemy.hopVy = 0;
+        if (enemy.hopCooldown === undefined) enemy.hopCooldown = 90;
+
+        if (enemy.hopOffsetY === 0 && enemy.hopVy === 0) {
+          enemy.hopCooldown--;
+          if (enemy.hopCooldown <= 0) {
+            enemy.hopVy = -6.5;
+            enemy.hopCooldown = 95 + Math.floor(Math.random() * 55);
+          }
+        } else {
+          enemy.hopVy += 0.42;
+          enemy.hopOffsetY += enemy.hopVy;
+          if (enemy.hopOffsetY >= 0) {
+            enemy.hopOffsetY = 0;
+            enemy.hopVy = 0;
+          }
+        }
+
         const finalGroundY = this.getGroundYAt(enemy.x + enemy.width / 2);
         if (finalGroundY !== null) {
-          enemy.y = finalGroundY - enemy.height;
+          enemy.y = finalGroundY - enemy.height + enemy.hopOffsetY;
           enemy.vy = 0;
         } else {
-          // 足元が穴の場合は落下
           enemy.vy = (enemy.vy || 0) + 0.6;
           enemy.y += enemy.vy;
         }
@@ -1473,7 +1798,6 @@ class Game {
         const nextX = enemy.x + enemy.vx;
         let hitWall = false;
 
-        // 1. 壁（塀・石垣）との衝突判定
         this.walls.forEach(wall => {
           if (
             nextX + enemy.width > wall.x &&
@@ -1490,7 +1814,6 @@ class Game {
           }
         });
 
-        // 2. 前方に登れない急な段差（崖）がある場合も反転
         const frontX = nextX + (enemy.vx > 0 ? enemy.width + 5 : -5);
         const frontGroundY = this.getGroundYAt(frontX);
         const currentGroundY = this.getGroundYAt(enemy.x + enemy.width / 2);
@@ -1509,13 +1832,10 @@ class Game {
         const groundY = this.getGroundYAt(centerX);
 
         if (groundY !== null) {
-          // 地面に接地して転がる
           enemy.y = groundY - enemy.height;
           enemy.vy = 0;
-          // 移動速度に同期した自然な回転（向きに合わせて時計回り/反時計回り）
           enemy.rotation = (enemy.rotation || 0) + (enemy.vx / (enemy.width / 2));
         } else {
-          // 穴の上に来たら重力で落下！
           enemy.vy = (enemy.vy || 0) + 0.65;
           enemy.y += enemy.vy;
           enemy.rotation = (enemy.rotation || 0) + (enemy.vx >= 0 ? 0.15 : -0.15);
@@ -1526,23 +1846,28 @@ class Game {
         const centerX = enemy.x + enemy.width / 2;
         const currentGroundY = this.getGroundYAt(centerX) || this.baseGroundY;
 
-        // カラスの基準飛行高度をコースの起伏（高台や谷）に合わせてスムーズに追従
-        const targetBaseY = currentGroundY - 170;
+        // プレイヤーの少し手前で緩やかに高度を下げてスリリングな駆け引きを演出
+        const distToPlayer = enemy.x - this.player.worldX;
+        const swoopOffset = (distToPlayer > -30 && distToPlayer < 220)
+          ? Math.sin(((220 - distToPlayer) / 250) * Math.PI) * 28
+          : 0;
+
+        const targetBaseY = currentGroundY - 155 + swoopOffset;
         if (enemy.baseY === undefined) {
           enemy.baseY = targetBaseY;
         } else {
           enemy.baseY += (targetBaseY - enemy.baseY) * 0.08;
         }
 
-        enemy.animPhase = (enemy.animPhase || 0) + 0.05;
-        enemy.y = enemy.baseY + Math.sin(enemy.animPhase) * 35;
+        enemy.animPhase = (enemy.animPhase || 0) + 0.048;
+        enemy.y = enemy.baseY + Math.sin(enemy.animPhase) * 30;
       }
 
       if (!enemy.isSatisfied) {
-        // 矩形交差判定（少しマージンを設けて正確に判定）
-        const pLeft = this.player.worldX + 10;
-        const pRight = this.player.worldX + this.player.width - 10;
-        const pTop = this.player.y + 8;
+        // 矩形交差判定（プレイヤーに少し優しいマージン）
+        const pLeft = this.player.worldX + 12;
+        const pRight = this.player.worldX + this.player.width - 12;
+        const pTop = this.player.y + 10;
         const pBottom = this.player.y + this.player.height - 4;
 
         const eLeft = enemy.x + 8;
@@ -1553,45 +1878,79 @@ class Game {
         const isColliding = (pRight > eLeft && pLeft < eRight && pBottom > eTop && pTop < eBottom);
 
         if (isColliding) {
-          // 1. だんごダッシュ中の体当たり突破
-          if (this.player.hasDash) {
+          // 1. だんごダッシュ中・フィーバー中のおもてなし突破！
+          if (this.player.hasDash || this.isFever) {
             enemy.isSatisfied = true;
             enemy.satisfiedTime = Date.now();
-            this.score += 400;
+            const pts = Math.round(400 * (this.isFever ? 2 : 1));
+            this.score += pts;
+            this.triggerScreenShake(6, 4);
             soundEngine.playEnemySatisfied();
-            this.addFloatingText(enemy.x, enemy.y - 20, '💥 突進突破! +400点', '#ffc857');
+            const label = this.player.hasDash ? `💥 突進突破! +${pts}` : `🌸 お茶会おもてなし! +${pts}`;
+            this.addFloatingText(enemy.x, enemy.y - 20, label, '#ffc857');
           }
-          // 2. 上からの明確な踏みつけ判定（落下中かつ足元が敵の上半分）
-          else if (this.player.vy > 1.2 && pBottom <= eTop + (eBottom - eTop) * 0.5) {
+          // 2. 上からの踏みつけ判定（落下中または頂点付近かつ足元が敵の上部65%）
+          else if (this.player.vy > -1.0 && pBottom <= eTop + (eBottom - eTop) * 0.65) {
             enemy.isSatisfied = true;
             enemy.satisfiedTime = Date.now();
-            this.player.vy = -11.0; // バウンド跳躍
-            this.score += 350;
+            this.stompCombo++;
+            this.player.vy = this.keys.jump ? -13.5 : -11.2; // ジャンプ押しっぱなしで大バウンド！
+            this.player.canDoubleJump = this.player.hasDoubleJump; // 連続アクション用に2段ジャンプ回復
+            const stompPts = (350 + (this.stompCombo - 1) * 150) * (this.isFever ? 2 : 1);
+            this.score += stompPts;
+            if (!this.isFever) this.feverGauge = Math.min(100, this.feverGauge + 10);
+            this.hitStopTimer = 2;
+            this.triggerScreenShake(6, 3);
             soundEngine.playEnemySatisfied();
-            this.addFloatingText(enemy.x, enemy.y - 20, '🌸 ふみふみ! +350点', '#ffdf9e');
+            const label = this.stompCombo > 1
+              ? `🌸 連続ふみふみ×${this.stompCombo}! +${stompPts}`
+              : `🌸 ふみふみ! +${stompPts}`;
+            this.addFloatingText(enemy.x, enemy.y - 20, label, '#ffdf9e');
           }
-          // 3. 通常の接触は確実にプレイヤー被弾！
+          // 3. 通常の接触は被弾！
           else {
             this.takeDamage();
+          }
+        } else if (!enemy.nearMissAwarded && !this.player.invincible && !this.player.hasDash && !this.isFever) {
+          // ✨ ヒヤリ回避（紙一重ニアミス）判定：当たり判定の外側32px以内をかすめて通過！
+          const margin = 32;
+          const isNear = (
+            pRight + margin > eLeft &&
+            pLeft - margin < eRight &&
+            pBottom + margin > eTop &&
+            pTop - margin < eBottom
+          );
+          if (isNear) {
+            enemy.nearMissAwarded = true;
+            const bonus = Math.round(150 * this.getComboMultiplier());
+            this.score += bonus;
+            this.feverGauge = Math.min(100, this.feverGauge + 7);
+            if (this.feverGauge >= 100 && !this.isFever) {
+              this.startFever();
+            }
+            soundEngine.playNearMiss();
+            this.addFloatingText(this.player.worldX + this.player.width / 2, this.player.y - 24, `✨ ヒヤリ回避! +${bonus}`, '#72efdd');
+            this.addEffect(this.player.worldX + this.player.width / 2, this.player.y + this.player.height / 2, 'sparkle');
           }
         }
       }
     });
 
     // ガベージコレクション
-    this.platforms = this.platforms.filter(p => p.x > this.cameraX - 400);
+    this.platforms = this.platforms.filter(p => p.x + p.width > this.cameraX - 400);
     this.items = this.items.filter(i => i.x > this.cameraX - 400);
-    this.enemies = this.enemies.filter(e => e.x > this.cameraX - 400 && e.x < this.cameraX + this.width + 1200 && e.y < this.height + 150 && (!e.isSatisfied || Date.now() - e.satisfiedTime < 800));
+    this.enemies = this.enemies.filter(e => e.x > this.cameraX - 400 && e.x < this.cameraX + this.width + 1800 && e.y < this.height + 150 && (!e.isSatisfied || Date.now() - e.satisfiedTime < 800));
     this.springs = this.springs.filter(s => s.x > this.cameraX - 400);
     this.terrainSegments = this.terrainSegments.filter(t => t.x + t.width > this.cameraX - 600);
     this.walls = this.walls.filter(w => w.x > this.cameraX - 400);
 
-    // エフェクト更新
-    this.effects.forEach((eff, idx) => {
+    // エフェクト更新（逆順ループでsplice安全処理）
+    for (let idx = this.effects.length - 1; idx >= 0; idx--) {
+      const eff = this.effects[idx];
       eff.life--;
-      if (eff.type === 'text') eff.y -= 0.8;
+      if (eff.type === 'text') eff.y -= 0.85;
       if (eff.life <= 0) this.effects.splice(idx, 1);
-    });
+    }
 
     // HUD更新
     uiManager.updateHUD({
@@ -1599,12 +1958,14 @@ class Game {
       distance: this.distance,
       lives: this.lives,
       combo: this.combo,
+      comboMultiplier: this.getComboMultiplier(),
       feverGauge: this.feverGauge,
       isFever: this.isFever,
       hasDash: this.player.hasDash,
       dashTimer: this.player.dashTimer,
       hasShield: this.player.hasShield,
       hasDoubleJump: this.player.hasDoubleJump,
+      floatTimer: this.player.floatTimer,
       sakuramochiStock: this.player.sakuramochiStock
     });
   }
@@ -1614,6 +1975,14 @@ class Game {
   // =========================================================================
   render() {
     this.ctx.clearRect(0, 0, this.width, this.height);
+
+    // 画面シェイク（踏みつけ・被弾・大跳躍の手応え演出）
+    this.ctx.save();
+    if (this.shakeTimer > 0 && this.shakeMagnitude > 0) {
+      const sx = (Math.random() - 0.5) * this.shakeMagnitude * 2;
+      const sy = (Math.random() - 0.5) * this.shakeMagnitude * 2;
+      this.ctx.translate(sx, sy);
+    }
 
     // 1. 背景パララックス描画（カメラ位置に応じてスクロール）
     spriteManager.renderBackground(this.ctx, this.cameraX, this.width, this.height, this.isFever);
@@ -1781,15 +2150,29 @@ class Game {
       });
     });
 
-    // 7. 敵キャラクター
+    // 7. 敵キャラクター（および画面右端からの接近予兆アラート）
     this.enemies.forEach(enemy => {
+      const screenX = enemy.x - this.cameraX;
+      // 画面右端の外側 0〜150px から迫る樽・カラスには接近予兆バッジを表示！
+      if (
+        this.state === 'PLAYING' &&
+        !enemy.isSatisfied &&
+        (enemy.type === 'barrel' || enemy.type === 'crow') &&
+        enemy.vx < 0 &&
+        screenX > this.width - 8 &&
+        screenX < this.width + 150
+      ) {
+        spriteManager.renderWarning(this.ctx, enemy.y + enemy.height / 2, enemy.type, this.width);
+      }
       spriteManager.renderEnemy(this.ctx, {
-        x: enemy.x - this.cameraX,
+        x: screenX,
         y: enemy.y,
         width: enemy.width,
         height: enemy.height,
         type: enemy.type,
         vx: enemy.vx,
+        hopOffsetY: enemy.hopOffsetY,
+        hopVy: enemy.hopVy,
         rotation: enemy.rotation,
         isSatisfied: enemy.isSatisfied,
         satisfiedTime: enemy.satisfiedTime
@@ -1807,7 +2190,10 @@ class Game {
       animTimer: this.player.animTimer,
       invincible: this.player.invincible,
       hasDash: this.player.hasDash,
+      dashTimer: this.player.dashTimer,
       hasShield: this.player.hasShield,
+      isFever: this.isFever,
+      floatTimer: this.player.floatTimer,
       vy: this.player.vy
     });
 
@@ -1850,6 +2236,21 @@ class Game {
         this.ctx.restore();
       }
     });
+
+    // 10b. 残り体力1（ピンチ）のドキドキ周辺脈動オーバーレイ
+    if (this.state === 'PLAYING' && this.lives === 1) {
+      const pulse = 0.08 + Math.sin(Date.now() / 180) * 0.05;
+      this.ctx.save();
+      const pinchGrad = this.ctx.createRadialGradient(
+        this.width / 2, this.height / 2, this.width * 0.35,
+        this.width / 2, this.height / 2, this.height * 0.65
+      );
+      pinchGrad.addColorStop(0, 'rgba(220, 40, 60, 0)');
+      pinchGrad.addColorStop(1, `rgba(220, 40, 60, ${pulse})`);
+      this.ctx.fillStyle = pinchGrad;
+      this.ctx.fillRect(0, 0, this.width, this.height);
+      this.ctx.restore();
+    }
 
     // 11. ゲームオーバー演出オーバーレイ（周辺減光＆おやすみテロップ）
     if (this.state === 'GAMEOVER') {
@@ -1902,6 +2303,9 @@ class Game {
       }
       this.ctx.restore();
     }
+
+    // 画面シェイク用 save() の対応 restore()
+    this.ctx.restore();
   }
 
   async start() {
