@@ -23,6 +23,7 @@ class Game {
     this.feverTimer = 0;
     this.lastStationIndex = 0;
     this.stompCombo = 0;
+    this.currentEnvPhase = 'day'; // 'day', 'sunset', 'night', 'rain'
 
     // 演出・手触りタイマー
     this.hitStopTimer = 0;
@@ -49,6 +50,8 @@ class Game {
       coyoteTimer: 0,      // 崖踏み出し猶予フレーム
       jumpBufferTimer: 0,  // ジャンプ先行入力フレーム
       springBoostTimer: 0, // 大臼ジャンプ後の前進ブースト維持フレーム
+      windBoostTimer: 0,   // 春一番の追い風ブースト余韻フレーム
+      inWindZone: false,   // 追い風ゾーン滞在フラグ
       knockbackTimer: 0,   // 被弾ノックバック演出フレーム
       lastSafeX: 120,      // 穴落下時の安全な復帰X座標
       lastSafeY: 575,      // 穴落下時の安全な復帰Y座標
@@ -73,8 +76,10 @@ class Game {
     this.projectiles = [];
     this.springs = [];
     this.effects = [];
-    this.terrainSegments = []; // 地形セグメント（地面の高低差）
-    this.walls = [];           // 壁型障害物（石垣・土塀）
+    this.terrainSegments = [];  // 地形セグメント（地面の高低差）
+    this.walls = [];            // 壁型障害物（石垣・土塀）
+    this.crumblingBridges = []; // 季節ギミック: 崩れる古橋
+    this.windZones = [];        // 季節ギミック: 春一番の追い風ゾーン
 
     // 入力状態
     this.keys = {
@@ -226,6 +231,7 @@ class Game {
     this.feverTimer = 0;
     this.lastStationIndex = 0;
     this.stompCombo = 0;
+    this.currentEnvPhase = 'day';
     this.hitStopTimer = 0;
     this.shakeTimer = 0;
     this.shakeMagnitude = 0;
@@ -240,6 +246,8 @@ class Game {
     this.player.coyoteTimer = 0;
     this.player.jumpBufferTimer = 0;
     this.player.springBoostTimer = 0;
+    this.player.windBoostTimer = 0;
+    this.player.inWindZone = false;
     this.player.knockbackTimer = 0;
     this.player.lastSafeX = 120;
     this.player.lastSafeY = this.baseGroundY - this.player.height;
@@ -270,6 +278,8 @@ class Game {
     this.effects = [];
     this.terrainSegments = [];
     this.walls = [];
+    this.crumblingBridges = [];
+    this.windZones = [];
 
     // 初期の平坦な地面セグメント（スタート直後は気持ちよく和菓子集めの導入）
     this.terrainSegments.push({
@@ -281,9 +291,6 @@ class Game {
     this.lastTerrainEndX = 720;
     this.currentTerrainY = this.baseGroundY;
 
-    // スタート直後のウェルカム金平糖アーチ（最初の1歩を楽しく！）
-    this.spawnKonpeitoArc(250, 410, this.baseGroundY - 45, 75, 4);
-
     // 初期街道生成
     this.generateStageAhead(1600);
 
@@ -291,33 +298,73 @@ class Game {
   }
 
   // =========================================================================
-  // 地面の高さ取得（terrainSegmentsから該当するセグメントを検索）
+  // 地面の高さ取得（坂道はコサイン補間で丸みのある滑らかな曲線物理）
   // =========================================================================
   getGroundYAt(worldX) {
-    // 該当する地形セグメントを後方から検索（最新のものが優先）
     for (let i = this.terrainSegments.length - 1; i >= 0; i--) {
       const seg = this.terrainSegments[i];
       if (worldX >= seg.x && worldX < seg.x + seg.width) {
         if (seg.type === 'gap') {
           return null; // 穴 — 地面なし
         }
-        if (seg.type === 'slope_up') {
-          // 上り坂: 左端がseg.yFrom、右端がseg.yTo
-          const t = (worldX - seg.x) / seg.width;
-          return seg.yFrom + (seg.yTo - seg.yFrom) * t;
-        }
-        if (seg.type === 'slope_down') {
-          const t = (worldX - seg.x) / seg.width;
-          return seg.yFrom + (seg.yTo - seg.yFrom) * t;
+        if (seg.type === 'slope_up' || seg.type === 'slope_down') {
+          const t = Math.max(0, Math.min(1, (worldX - seg.x) / seg.width));
+          // コサイン補間で坂の入り口・出口がカクカクせず滑らかに丸く接続
+          const smoothT = 0.5 - 0.5 * Math.cos(t * Math.PI);
+          return seg.yFrom + (seg.yTo - seg.yFrom) * smoothT;
         }
         return seg.y; // 'flat', 'raised', 'lowered'
       }
     }
-    return this.baseGroundY; // デフォルト
+    return this.baseGroundY;
   }
 
   // =========================================================================
-  // バランス＆配置ヘルパー（理不尽配置の防止・金平糖アーチ・動的レア選出）
+  // 街道の時間帯・天候ステート（春の昼 → 夕焼け → 夜桜提灯 → 春雨の朝霧）
+  // =========================================================================
+  getEnvironmentState() {
+    const cycleLen = 1400; // 1周 1,400m（各時間帯 350m）
+    const pos = ((this.distance % cycleLen) + cycleLen) % cycleLen;
+    const blend = 70; // 境目70mでスムーズにクロスフェード
+
+    const smoothStep = (edge0, edge1, x) => {
+      const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+      return t * t * (3 - 2 * t);
+    };
+
+    // 各フェーズの重み（0〜1）
+    let sunsetWeight = 0;
+    let nightWeight = 0;
+    let rainWeight = 0;
+    let phase = 'day';
+    let icon = '🌸';
+
+    if (pos < 350) {
+      phase = 'day';
+      icon = '🌸';
+      // 350mに近づくと夕焼けへフェードイン
+      sunsetWeight = smoothStep(350 - blend, 350, pos);
+    } else if (pos < 700) {
+      phase = 'sunset';
+      icon = '🌅';
+      sunsetWeight = 1 - smoothStep(700 - blend, 700, pos);
+      nightWeight = smoothStep(700 - blend, 700, pos);
+    } else if (pos < 1050) {
+      phase = 'night';
+      icon = '🌙';
+      nightWeight = 1 - smoothStep(1050 - blend, 1050, pos);
+      rainWeight = smoothStep(1050 - blend, 1050, pos);
+    } else {
+      phase = 'rain';
+      icon = '🌧️';
+      rainWeight = 1 - smoothStep(1400 - blend, 1400, pos);
+    }
+
+    return { phase, icon, sunsetWeight, nightWeight, rainWeight };
+  }
+
+  // =========================================================================
+  // バランス＆配置ヘルパー（理不尽配置の防止・希少金平糖・動的レア選出）
   // =========================================================================
   isGroundSolidRange(startX, endX) {
     let minY = Infinity;
@@ -342,6 +389,10 @@ class Game {
     for (let i = 0; i < this.walls.length; i++) {
       if (Math.abs(this.walls[i].x - x) < margin) return true;
     }
+    for (let i = 0; i < this.crumblingBridges.length; i++) {
+      const b = this.crumblingBridges[i];
+      if (x > b.x - margin && x < b.x + b.width + margin) return true;
+    }
     return false;
   }
 
@@ -357,18 +408,17 @@ class Game {
     return rareWagashi[Math.floor(Math.random() * rareWagashi.length)];
   }
 
-  // 美しい放物線アーチ状に金平糖を配置（ジャンプ軌道の自然なガイド）
-  spawnKonpeitoArc(startX, endX, baseY, peakHeight, count = 3) {
-    for (let i = 0; i < count; i++) {
-      const t = count === 1 ? 0.5 : i / (count - 1);
-      const ix = startX + (endX - startX) * t;
-      const iy = baseY - Math.sin(t * Math.PI) * peakHeight;
+  // 希少な金平糖を低確率（従来の約20分の1水準）で1個だけ配置
+  maybeSpawnRareKonpeito(x, y, chance = 0.08, platformRef = null) {
+    // 基準確率を20分の1水準（20,000pxあたり約6〜7個）に調整
+    if (Math.random() < chance * 1.8) {
       this.items.push({
-        x: ix - 16,
-        y: iy - 16,
+        x: x - 16,
+        y: y - 16,
         width: 32,
         height: 32,
-        type: 'konpeito'
+        type: 'konpeito',
+        platformRef: platformRef
       });
     }
   }
@@ -385,35 +435,27 @@ class Game {
   }
 
   // =========================================================================
-  // 地形の前方生成（段階的に変化する高低差＆爽快な大峡谷）
+  // 地形の前方生成（丸みある丘＆坂・崩れる古橋・大峡谷）
   // =========================================================================
   generateTerrainAhead(targetX) {
     while (this.lastTerrainEndX < targetX) {
       const roll = Math.random();
       const prevY = this.currentTerrainY;
-      // 距離に応じて緩やかに難易度UP（序盤は気持ちよく慣れる設計）
       const difficulty = Math.min(1.0, this.distance / 1200);
-      const isEarly = this.distance < 150;
+      const isEarly = this.distance < 120;
 
-      if (roll < 0.11 + difficulty * 0.06) {
-        // ===== 穴（ギャップ）: ジャンプで飛び越える + 金平糖ガイドアーチ =====
-        const gapWidth = 75 + Math.random() * 45 + difficulty * 35; // 最大約155px（通常ジャンプで余裕＋スリル）
+      if (roll < 0.10 + difficulty * 0.05) {
+        // ===== 穴（ギャップ）: ジャンプで飛び越える =====
+        const gapWidth = 75 + Math.random() * 45 + difficulty * 35;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: gapWidth,
           y: prevY,
           type: 'gap'
         });
-        // 穴の上に金平糖3個の放物線ガイドを配置
-        this.spawnKonpeitoArc(
-          this.lastTerrainEndX + 10,
-          this.lastTerrainEndX + gapWidth - 10,
-          prevY - 58,
-          62,
-          3
-        );
+        // まれに希少な金平糖が1個輝く
+        this.maybeSpawnRareKonpeito(this.lastTerrainEndX + gapWidth / 2, prevY - 108, 0.07);
         this.lastTerrainEndX += gapWidth;
-        // 穴の先は安全な平坦着地帯
         const landingW = 240 + Math.random() * 140;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
@@ -423,10 +465,80 @@ class Game {
         });
         this.lastTerrainEndX += landingW;
 
-      } else if (roll < 0.24 + difficulty * 0.05) {
-        // ===== 上り坂 → 高台 =====
+      } else if (!isEarly && roll < 0.20 + difficulty * 0.05) {
+        // ===== 季節ギミック: 崩れる古橋エリア（乗ると揺れて落ちるスリル！） =====
+        const approachW = 140;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: approachW,
+          y: prevY,
+          type: 'flat'
+        });
+        this.lastTerrainEndX += approachW;
+
+        const doubleBridge = (this.distance >= 320 && Math.random() < 0.45);
+        const bridgeGapW = doubleBridge ? 310 : 195;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: bridgeGapW,
+          y: prevY,
+          type: 'gap'
+        });
+
+        if (doubleBridge) {
+          // 2連の崩れる古橋（リズムよく渡り切るドキドキ感！）
+          const b1X = this.lastTerrainEndX + 26;
+          const b2X = this.lastTerrainEndX + 168;
+          this.crumblingBridges.push({
+            x: b1X, y: prevY, baseY: prevY, width: 112, height: 18,
+            state: 'idle', timer: 0, vy: 0, fallDistance: 0, respawnTimer: 0
+          });
+          this.crumblingBridges.push({
+            x: b2X, y: prevY - 14, baseY: prevY - 14, width: 112, height: 18,
+            state: 'idle', timer: 0, vy: 0, fallDistance: 0, respawnTimer: 0
+          });
+          // 中央上空にご褒美の名物和菓子
+          if (Math.random() < 0.7) {
+            this.items.push({
+              x: this.lastTerrainEndX + bridgeGapW / 2 - 19,
+              y: prevY - 96,
+              width: 38,
+              height: 38,
+              type: this.pickRareWagashi()
+            });
+          }
+        } else {
+          // 単体の崩れる古橋
+          const bX = this.lastTerrainEndX + 34;
+          this.crumblingBridges.push({
+            x: bX, y: prevY, baseY: prevY, width: 126, height: 18,
+            state: 'idle', timer: 0, vy: 0, fallDistance: 0, respawnTimer: 0
+          });
+          if (Math.random() < 0.6) {
+            this.items.push({
+              x: bX + 44,
+              y: prevY - 62,
+              width: 38,
+              height: 38,
+              type: this.pickRareWagashi()
+            });
+          }
+        }
+        this.lastTerrainEndX += bridgeGapW;
+
+        const landingW = 240 + Math.random() * 100;
+        this.terrainSegments.push({
+          x: this.lastTerrainEndX,
+          width: landingW,
+          y: prevY,
+          type: 'flat'
+        });
+        this.lastTerrainEndX += landingW;
+
+      } else if (roll < 0.32 + difficulty * 0.04) {
+        // ===== 上り坂 → 高台（丸みある丘） =====
         const riseAmount = 45 + Math.random() * 55;
-        const slopeW = 130 + Math.random() * 70;
+        const slopeW = 140 + Math.random() * 70;
         const newY = Math.max(495, prevY - riseAmount);
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
@@ -447,10 +559,10 @@ class Game {
         this.lastTerrainEndX += flatW;
         this.currentTerrainY = newY;
 
-      } else if (roll < 0.36 + difficulty * 0.04) {
+      } else if (roll < 0.43 + difficulty * 0.04) {
         // ===== 下り坂 → 谷 =====
         const dropAmount = 40 + Math.random() * 50;
-        const slopeW = 110 + Math.random() * 70;
+        const slopeW = 120 + Math.random() * 70;
         const newY = Math.min(this.baseGroundY, prevY + dropAmount);
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
@@ -471,9 +583,9 @@ class Game {
         this.lastTerrainEndX += flatW;
         this.currentTerrainY = newY;
 
-      } else if (roll < 0.45 + difficulty * 0.04) {
-        // ===== 階段状の段差（3段の上り階段＋金平糖） =====
-        const stepW = 95;
+      } else if (roll < 0.51 + difficulty * 0.03) {
+        // ===== 階段状の段差（丸みある3段の土手ステップ） =====
+        const stepW = 100;
         const stepH = 34;
         let stepY = prevY;
         for (let s = 0; s < 3; s++) {
@@ -484,14 +596,7 @@ class Game {
             y: stepY,
             type: 'raised'
           });
-          // 各段に金平糖をテンポよく配置
-          this.items.push({
-            x: this.lastTerrainEndX + stepW / 2 - 16,
-            y: stepY - 46,
-            width: 32,
-            height: 32,
-            type: 'konpeito'
-          });
+          this.maybeSpawnRareKonpeito(this.lastTerrainEndX + stepW / 2, stepY - 46, 0.04);
           this.lastTerrainEndX += stepW;
         }
         const topW = 200 + Math.random() * 120;
@@ -504,8 +609,8 @@ class Game {
         this.lastTerrainEndX += topW;
         this.currentTerrainY = stepY;
 
-      } else if (!isEarly && roll < 0.53 + difficulty * 0.04) {
-        // ===== 地面に石垣の壁（ジャンプで越える + 上に金平糖アーチ） =====
+      } else if (!isEarly && roll < 0.58 + difficulty * 0.03) {
+        // ===== 地面に石垣の壁（ジャンプで越える） =====
         const wallH = 58 + Math.random() * 34;
         const wallX = this.lastTerrainEndX + 80;
         this.walls.push({
@@ -514,7 +619,7 @@ class Game {
           width: 30,
           height: wallH
         });
-        this.spawnKonpeitoArc(wallX - 45, wallX + 75, prevY - wallH - 35, 36, 3);
+        this.maybeSpawnRareKonpeito(wallX + 15, prevY - wallH - 58, 0.06);
         const segW = 360 + Math.random() * 180;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
@@ -524,11 +629,11 @@ class Game {
         });
         this.lastTerrainEndX += segW;
 
-      } else if (!isEarly && roll < 0.61 + difficulty * 0.04) {
+      } else if (!isEarly && roll < 0.65 + difficulty * 0.04) {
         // ===== 高台→穴→瓦足場→安全着地（浮島アクション） =====
         const riseH = 55 + Math.random() * 35;
         const newY = Math.max(510, prevY - riseH);
-        const slopeW = 85;
+        const slopeW = 95;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: slopeW,
@@ -548,7 +653,6 @@ class Game {
         });
         this.lastTerrainEndX += platW;
 
-        // 浮島を挟む穴（幅を適正化し、中央の瓦足場から確実に着地できる構造へ）
         const totalGapW = 240;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
@@ -571,7 +675,7 @@ class Game {
         };
         this.platforms.push(floatPlat);
         this.items.push({
-          x: floatPlat.x + floatPlat.width / 2 - 18,
+          x: floatPlat.x + floatPlat.width / 2 - 19,
           y: newY - 46,
           width: 38,
           height: 38,
@@ -580,7 +684,6 @@ class Game {
         });
         this.lastTerrainEndX += totalGapW;
 
-        // 対岸の着地台→緩やかな下り坂で基準へ戻る
         const landW = 120;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
@@ -590,7 +693,7 @@ class Game {
         });
         this.lastTerrainEndX += landW;
 
-        const downW = 90;
+        const downW = 100;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
           width: downW,
@@ -602,8 +705,8 @@ class Game {
         this.lastTerrainEndX += downW;
         this.currentTerrainY = this.baseGroundY;
 
-      } else if (!isEarly && roll < 0.74 + difficulty * 0.04) {
-        // ===== 大臼スーパージャンプ大峡谷（爽快大ジャンプ＋空中お宝アーチ） =====
+      } else if (!isEarly && roll < 0.76 + difficulty * 0.04) {
+        // ===== 大臼スーパージャンプ大峡谷 =====
         const approachW = 165;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
@@ -612,7 +715,6 @@ class Game {
           type: 'flat'
         });
 
-        // 大穴の直前（縁から52px手前）に必ず餅つきの大臼を設置
         const springX = this.lastTerrainEndX + approachW - 56;
         this.springs.push({
           x: springX,
@@ -622,7 +724,6 @@ class Game {
         });
         this.lastTerrainEndX += approachW;
 
-        // 大臼ブーストで気持ちよく確実に超えられる大峡谷（幅 255px〜300px）
         const giantGapW = 255 + Math.random() * 45;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
@@ -631,25 +732,18 @@ class Game {
           type: 'gap'
         });
 
-        // 大ジャンプの放物線軌道に沿ってお宝アーチ（5個）を配置
-        const numItems = 5;
-        for (let i = 0; i < numItems; i++) {
-          const t = (i + 1) / (numItems + 1);
-          const itemX = this.lastTerrainEndX + giantGapW * t - 18;
-          const arcY = prevY - 60 - Math.sin(t * Math.PI) * 175;
-          const isRare = (i === 2); // アーチの頂点に名物和菓子！
-          this.items.push({
-            x: itemX,
-            y: arcY,
-            width: isRare ? 38 : 32,
-            height: isRare ? 38 : 32,
-            type: isRare ? this.pickRareWagashi() : 'konpeito'
-          });
-        }
+        // 大峡谷の頂点に名物和菓子を1個（金平糖は希少確率で1個のみ）
+        this.items.push({
+          x: this.lastTerrainEndX + giantGapW * 0.5 - 19,
+          y: prevY - 225,
+          width: 38,
+          height: 38,
+          type: this.pickRareWagashi()
+        });
+        this.maybeSpawnRareKonpeito(this.lastTerrainEndX + giantGapW * 0.28, prevY - 175, 0.08);
 
         this.lastTerrainEndX += giantGapW;
 
-        // 対岸の広い平坦着地帯
         const landingW = 280 + Math.random() * 100;
         this.terrainSegments.push({
           x: this.lastTerrainEndX,
@@ -660,9 +754,9 @@ class Game {
         this.lastTerrainEndX += landingW;
 
       } else {
-        // ===== 通常の平坦地面（高すぎたら下り坂で基準Yへ緩やかに戻る） =====
+        // ===== 通常の平坦地面（高すぎたら緩やかな下り坂で基準Yへ戻る） =====
         if (prevY < this.baseGroundY - 40) {
-          const slopeW = 100 + Math.random() * 60;
+          const slopeW = 115 + Math.random() * 60;
           const returnY = prevY + 40 + Math.random() * 30;
           const newY = Math.min(this.baseGroundY, returnY);
           this.terrainSegments.push({
@@ -689,24 +783,21 @@ class Game {
   }
 
   // =========================================================================
-  // 街道・ステージの前方生成（緩急のあるリズム・安全配置・ドキドキ感）
+  // 街道・ステージの前方生成（緩急のリズム・春一番追い風・希少金平糖）
   // =========================================================================
   generateStageAhead(targetX) {
-    // まず地形を先行生成
     this.generateTerrainAhead(targetX + 450);
 
-    const difficulty = Math.min(1.0, this.distance / 1500); // 緩やかな難易度上昇カーブ
-    const isMidOrLater = this.distance >= 260; // 品川宿手前から中盤ギミック解禁
+    const difficulty = Math.min(1.0, this.distance / 1500);
+    const isMidOrLater = this.distance >= 260;
 
     while (this.lastGeneratedX < targetX) {
-      // 序盤はゆったり(300〜390px)、進むほどテンポアップ(225〜310px)
       const baseDist = Math.max(225, 305 - difficulty * 80);
       const sectionDist = baseDist + Math.random() * 90;
       this.lastGeneratedX += sectionDist;
       const x = this.lastGeneratedX;
       const rawGroundY = this.getGroundYAt(x);
 
-      // 穴の上や既存の大臼・壁のすぐ近くは地上ギミックを置かない（理不尽配置の防止！）
       if (rawGroundY === null || this.hasObstacleNear(x, 115)) {
         continue;
       }
@@ -714,7 +805,7 @@ class Game {
       const localGroundY = rawGroundY;
       const pattern = Math.random();
 
-      if (pattern < 0.22) {
+      if (pattern < 0.21) {
         // パターン1: 瓦屋根足場（静止 or 動く足場）+ 名物和菓子 + 地上タヌキ
         const platW = 135 + Math.random() * 45;
         const platY = localGroundY - (100 + Math.random() * 38);
@@ -734,8 +825,7 @@ class Game {
         };
         this.platforms.push(plat);
 
-        // 屋根の上に名物和菓子＋両脇に金平糖
-        if (Math.random() < 0.78) {
+        if (Math.random() < 0.72) {
           this.items.push({
             x: x + platW / 2 - 19,
             y: platY - 44,
@@ -745,10 +835,9 @@ class Game {
             platformRef: isMoving ? plat : null
           });
         } else {
-          this.spawnKonpeitoArc(x + 18, x + platW - 18, platY - 36, 26, 3);
+          this.maybeSpawnRareKonpeito(x + platW / 2, platY - 42, 0.12, isMoving ? plat : null);
         }
 
-        // 地上の安全な場所にいたずらタヌキを配置
         const tanukiX = x + platW + 24;
         if (this.isGroundSolidRange(tanukiX - 10, tanukiX + 70) && !this.hasObstacleNear(tanukiX, 70)) {
           const tanukiGroundY = this.getGroundYAt(tanukiX + 26);
@@ -770,8 +859,8 @@ class Game {
             });
           }
         }
-      } else if (pattern < 0.42) {
-        // パターン2: 転がる酒樽（単発 or 中盤以降はテンポ良い2連樽）+ 飛び越え金平糖アーチ
+      } else if (pattern < 0.40) {
+        // パターン2: 転がる酒樽（単発 or 中盤以降はテンポ良い2連樽）
         const barrelSpeed = -2.2 - difficulty * 0.85;
         const barrelX = x + 40;
         if (this.isGroundSolidRange(barrelX - 20, barrelX + 120)) {
@@ -790,7 +879,6 @@ class Game {
             });
           }
 
-          // 中盤以降、リズムよく2連樽（間隔を十分空けてジャンプ着地→再ジャンプが気持ちよく決まる距離）
           if (isMidOrLater && Math.random() < 0.25 + difficulty * 0.25) {
             const barrel2X = barrelX + 105;
             const barrel2GroundY = this.getGroundYAt(barrel2X + 23);
@@ -809,11 +897,10 @@ class Game {
             }
           }
 
-          // 樽を飛び越える軌道に金平糖アーチ
-          this.spawnKonpeitoArc(x - 10, x + 90, localGroundY - 58, 52, 3);
+          this.maybeSpawnRareKonpeito(x + 40, localGroundY - 105, 0.05);
         }
-      } else if (pattern < 0.60) {
-        // パターン3: 急降下カラス（単羽 or 中盤以降は高低2羽）+ 空中和菓子
+      } else if (pattern < 0.56) {
+        // パターン3: 急降下カラス（単羽 or 中盤以降は高低2羽）
         const crowX = x + 90;
         const crowGroundY = this.getGroundYAt(crowX + 25) || localGroundY;
         this.enemies.push({
@@ -829,7 +916,6 @@ class Game {
           nearMissAwarded: false
         });
 
-        // 2羽目のカラス（中盤以降、避けやすい間隔と高度差で配置）
         if (isMidOrLater && Math.random() < 0.22 + difficulty * 0.25) {
           this.enemies.push({
             x: crowX + 125,
@@ -845,16 +931,19 @@ class Game {
           });
         }
 
-        // カラスの少し手前に和菓子
-        this.items.push({
-          x: x + 25,
-          y: localGroundY - 115,
-          width: 36,
-          height: 36,
-          type: Math.random() < 0.45 ? this.pickRareWagashi() : 'konpeito'
-        });
-      } else if (pattern < 0.74) {
-        // パターン4: 石垣の塀 + 敵（安全チェック付き）+ 塀の上にご褒美和菓子
+        if (Math.random() < 0.35) {
+          this.items.push({
+            x: x + 25,
+            y: localGroundY - 115,
+            width: 38,
+            height: 38,
+            type: this.pickRareWagashi()
+          });
+        } else {
+          this.maybeSpawnRareKonpeito(x + 25, localGroundY - 115, 0.05);
+        }
+      } else if (pattern < 0.69) {
+        // パターン4: 石垣の塀 + 敵 + 塀の上にご褒美和菓子
         if (this.isGroundSolidRange(x - 30, x + 130)) {
           const wallH = 62 + Math.random() * 28;
           this.walls.push({
@@ -864,7 +953,6 @@ class Game {
             height: wallH
           });
 
-          // 塀の向こう側にタヌキまたは転がる樽
           if (Math.random() < 0.55) {
             const tanukiX = x + 65;
             const tanukiGroundY = this.getGroundYAt(tanukiX + 26);
@@ -903,16 +991,17 @@ class Game {
             }
           }
 
-          // 塀の上に名物和菓子
-          this.items.push({
-            x: x - 5,
-            y: localGroundY - wallH - 44,
-            width: 38,
-            height: 38,
-            type: this.pickRareWagashi()
-          });
+          if (Math.random() < 0.65) {
+            this.items.push({
+              x: x - 5,
+              y: localGroundY - wallH - 44,
+              width: 38,
+              height: 38,
+              type: this.pickRareWagashi()
+            });
+          }
         }
-      } else if (pattern < 0.83) {
+      } else if (pattern < 0.78) {
         // パターン5: 空中瓦渡り（2段の瓦屋根でお宝ルート）
         const plat1W = 110 + Math.random() * 25;
         const plat1Y = localGroundY - 105;
@@ -947,14 +1036,7 @@ class Game {
         };
         this.platforms.push(plat2);
 
-        this.items.push({
-          x: x + plat1W / 2 - 16,
-          y: plat1Y - 40,
-          width: 32,
-          height: 32,
-          type: 'konpeito',
-          platformRef: isPlat1Moving ? plat1 : null
-        });
+        this.maybeSpawnRareKonpeito(x + plat1W / 2, plat1Y - 36, 0.06, isPlat1Moving ? plat1 : null);
         this.items.push({
           x: x + 135 + plat2W / 2 - 19,
           y: plat2Y - 44,
@@ -963,7 +1045,6 @@ class Game {
           type: this.pickRareWagashi()
         });
 
-        // 地上は安全な範囲なら転がる樽
         if (this.isGroundSolidRange(x + 70, x + 160)) {
           const barrelGroundY = this.getGroundYAt(x + 110);
           if (barrelGroundY !== null) {
@@ -980,8 +1061,29 @@ class Game {
             });
           }
         }
-      } else if (pattern < 0.90 && isMidOrLater) {
-        // パターン6: 立体連携（地上樽＋上空カラスのドキドキ連携）
+      } else if (pattern < 0.88) {
+        // パターン6: 季節ギミック「🌬️ 春一番の追い風ゾーン」+ 風乗り名物和菓子！
+        const zoneW = 270 + Math.random() * 70;
+        const zoneH = 195;
+        this.windZones.push({
+          x: x,
+          y: localGroundY - zoneH,
+          width: zoneW,
+          height: zoneH,
+          triggered: false
+        });
+        // 風に乗って跳ぶと届く高空に名物和菓子
+        this.items.push({
+          x: x + zoneW * 0.55 - 19,
+          y: localGroundY - 165,
+          width: 38,
+          height: 38,
+          type: this.pickRareWagashi()
+        });
+        this.maybeSpawnRareKonpeito(x + zoneW * 0.8, localGroundY - 135, 0.08);
+        this.lastGeneratedX += 110; // 追い風ゾーンの余白を確保
+      } else if (pattern < 0.94 && isMidOrLater) {
+        // パターン7: 立体連携（地上樽＋上空カラスのドキドキ連携）
         if (this.isGroundSolidRange(x + 20, x + 130)) {
           const barrelGroundY = this.getGroundYAt(x + 50);
           if (barrelGroundY !== null) {
@@ -1011,11 +1113,9 @@ class Game {
             isSatisfied: false,
             nearMissAwarded: false
           });
-
-          this.spawnKonpeitoArc(x - 15, x + 75, localGroundY - 52, 46, 3);
         }
-      } else if (pattern < 0.95) {
-        // パターン7: 餅つきの大臼 + 高空の名物和菓子 + 踏みつけチャンスのカラス
+      } else {
+        // パターン8: 餅つきの大臼 + 高空の名物和菓子 + 踏みつけチャンスのカラス
         if (this.isGroundSolidRange(x - 20, x + 80)) {
           this.springs.push({
             x: x,
@@ -1023,7 +1123,6 @@ class Game {
             width: 56,
             height: 36
           });
-          this.spawnKonpeitoArc(x + 20, x + 180, localGroundY - 120, 95, 4);
           this.items.push({
             x: x + 82,
             y: localGroundY - 225,
@@ -1031,6 +1130,7 @@ class Game {
             height: 40,
             type: this.pickRareWagashi()
           });
+          this.maybeSpawnRareKonpeito(x + 135, localGroundY - 185, 0.08);
 
           if (Math.random() < 0.5) {
             this.enemies.push({
@@ -1047,16 +1147,6 @@ class Game {
             });
           }
         }
-      } else {
-        // パターン8: ご褒美の和菓子ウェーブ街道（緊張と緩和の「ほっと一息＆コンボ回復」ゾーン！）
-        this.spawnKonpeitoArc(x, x + 160, localGroundY - 46, 58, 5);
-        this.items.push({
-          x: x + 62,
-          y: localGroundY - 120,
-          width: 38,
-          height: 38,
-          type: this.pickRareWagashi()
-        });
       }
     }
   }
@@ -1073,9 +1163,9 @@ class Game {
     const basePts = Math.round(200 * mult);
     this.score += basePts;
 
-    // フィーバーゲージ蓄積
+    // フィーバーゲージ蓄積（めったにないご褒美になるよう適正調整。希少な金平糖は大ボーナス！）
     if (!this.isFever) {
-      this.feverGauge = Math.min(100, this.feverGauge + (type === 'konpeito' ? 7 : 15));
+      this.feverGauge = Math.min(100, this.feverGauge + (type === 'konpeito' ? 22 : 10));
       if (this.feverGauge >= 100) {
         this.startFever();
       }
@@ -1132,9 +1222,10 @@ class Game {
         break;
 
       case 'konpeito': {
-        const pts = Math.round(250 * mult);
+        const pts = Math.round(600 * mult);
         this.score += pts;
-        this.addFloatingText(this.player.worldX, this.player.y - 18, `+${pts}`, '#ffebbe');
+        soundEngine.playPowerup();
+        this.addFloatingText(this.player.worldX, this.player.y - 20, `🌟 希少な金平糖! +${pts}`, '#fff0a6');
         break;
       }
     }
@@ -1340,12 +1431,38 @@ class Game {
       return;
     }
 
+    // 春一番の追い風ゾーン判定
+    let currentlyInWind = false;
+    const pCenterX = this.player.worldX + this.player.width / 2;
+    const pCenterY = this.player.y + this.player.height / 2;
+    this.windZones.forEach(zone => {
+      if (
+        pCenterX >= zone.x &&
+        pCenterX <= zone.x + zone.width &&
+        pCenterY >= zone.y &&
+        pCenterY <= zone.y + zone.height + 20
+      ) {
+        currentlyInWind = true;
+        this.player.windBoostTimer = 18;
+        if (!zone.triggered) {
+          zone.triggered = true;
+          soundEngine.playWindGust();
+          this.addFloatingText(this.player.worldX + this.player.width / 2, this.player.y - 26, '🌬️ 春一番！追い風！', '#ffd6e7');
+        }
+      }
+    });
+    this.player.inWindZone = currentlyInWind;
+    if (this.player.windBoostTimer > 0 && !currentlyInWind) {
+      this.player.windBoostTimer--;
+    }
+
     // プレイヤーの左右入力移動
     let moveDir = 0;
     if (this.keys.left) moveDir -= 1;
     if (this.keys.right) moveDir += 1;
 
-    const currentSpeed = this.player.hasDash ? this.player.baseSpeed * 1.75 : this.player.baseSpeed;
+    const windBonus = (this.player.windBoostTimer > 0) ? 2.3 : 0;
+    const currentSpeed = (this.player.hasDash ? this.player.baseSpeed * 1.75 : this.player.baseSpeed) + windBonus;
 
     if (this.player.knockbackTimer > 0) {
       this.player.knockbackTimer--;
@@ -1361,8 +1478,14 @@ class Game {
         this.player.facingRight = true;
       }
     } else if (moveDir !== 0) {
-      this.player.vx = moveDir * currentSpeed;
+      // 追い風中は右移動がグッと速く、左移動は少し押し戻される風情
+      const dirSpeed = moveDir > 0 ? currentSpeed : Math.max(2.6, this.player.baseSpeed - windBonus * 0.5);
+      this.player.vx = moveDir * dirSpeed;
       this.player.facingRight = moveDir > 0;
+    } else if (this.player.inWindZone) {
+      // 追い風ゾーンで立ち止まっていてもそよ風で少し前へ押し出される
+      this.player.vx = 1.6;
+      this.player.facingRight = true;
     } else {
       // 摩擦で停止
       this.player.vx *= 0.75;
@@ -1383,6 +1506,22 @@ class Game {
       this.score += Math.floor((currentDistM - this.distance) * 5) * (this.isFever ? 2 : 1);
       this.distance = currentDistM;
       this.checkStationArrival();
+    }
+
+    // 時間帯・天候フェーズ切替演出チェック
+    const envState = this.getEnvironmentState();
+    if (envState.phase !== this.currentEnvPhase) {
+      this.currentEnvPhase = envState.phase;
+      const envMessages = {
+        day: { text: '🌸 爽やかな春の朝！', color: '#ffd6e7' },
+        sunset: { text: '🌅 夕暮れの街道へ…', color: '#ffb76b' },
+        night: { text: '🏮 夜桜と提灯の道…', color: '#ffe599' },
+        rain: { text: '🌧️ しとしと春雨…', color: '#bde0fe' }
+      };
+      const msg = envMessages[envState.phase];
+      if (msg) {
+        this.addFloatingText(this.player.worldX + 40, this.player.y - 44, msg.text, msg.color);
+      }
     }
 
     // カメラ位置の更新（主人公の進行に合わせて追従。止まれば背景も止まる）
@@ -1411,12 +1550,50 @@ class Game {
       }
     });
 
+    // 崩れる古橋の状態更新（揺れ→崩壊→落下→一定時間後に安全再構築）
+    this.crumblingBridges.forEach(bridge => {
+      if (bridge.state === 'shaking') {
+        bridge.timer--;
+        if (bridge.timer % 15 === 0 && bridge.timer > 0) {
+          this.addEffect(bridge.x + Math.random() * bridge.width, bridge.y + bridge.height, 'sparkle');
+        }
+        if (bridge.timer <= 0) {
+          bridge.state = 'falling';
+          bridge.vy = 1.5;
+          bridge.fallDistance = 0;
+          soundEngine.playBridgeBreak();
+          this.triggerScreenShake(6, 2.5);
+        }
+      } else if (bridge.state === 'falling') {
+        bridge.vy += 0.55;
+        bridge.y += bridge.vy;
+        bridge.fallDistance += bridge.vy;
+        if (bridge.fallDistance > 200) {
+          bridge.state = 'broken';
+          bridge.respawnTimer = 150; // 2.5秒後に再構築（落下復帰しても詰まない安全設計）
+        }
+      } else if (bridge.state === 'broken') {
+        bridge.respawnTimer--;
+        if (bridge.respawnTimer <= 0) {
+          bridge.state = 'idle';
+          bridge.y = bridge.baseY;
+          bridge.vy = 0;
+          bridge.fallDistance = 0;
+        }
+      }
+    });
+
     // コヨーテタイム & 先行入力タイマーの更新
     const wasGrounded = this.player.isGrounded;
     if (this.player.jumpBufferTimer > 0) this.player.jumpBufferTimer--;
 
-    // 重力・垂直物理（ふわふわ滞空ボーナス中は落下速度が緩やかに！）
-    const gravity = (this.player.floatTimer > 0 && this.player.vy > 0) ? 0.42 : 0.66;
+    // 重力・垂直物理（ふわふわ滞空・追い風中は少し軽やかに！）
+    let gravity = 0.66;
+    if (this.player.floatTimer > 0 && this.player.vy > 0) {
+      gravity = 0.42;
+    } else if (this.player.windBoostTimer > 0) {
+      gravity = 0.56;
+    }
     this.player.vy = Math.min(16, this.player.vy + gravity);
     this.player.y += this.player.vy;
     this.player.isGrounded = false;
@@ -1510,6 +1687,30 @@ class Game {
       }
     });
 
+    // 崩れる古橋の着地判定（乗ると揺れ始めて約0.75秒後に崩落！）
+    this.crumblingBridges.forEach(bridge => {
+      if (bridge.state !== 'idle' && bridge.state !== 'shaking') return;
+      if (
+        this.player.worldX + this.player.width * 0.82 > bridge.x &&
+        this.player.worldX + this.player.width * 0.18 < bridge.x + bridge.width &&
+        this.player.y + this.player.height >= bridge.y &&
+        this.player.y + this.player.height <= bridge.y + 24 &&
+        this.player.vy >= 0
+      ) {
+        this.player.y = bridge.y - this.player.height;
+        this.player.vy = 0;
+        this.player.isGrounded = true;
+        this.player.canDoubleJump = this.player.hasDoubleJump;
+        this.player.springBoostTimer = 0;
+        this.stompCombo = 0;
+        if (bridge.state === 'idle') {
+          bridge.state = 'shaking';
+          bridge.timer = 45; // 約0.75秒のドキドキ猶予！
+          soundEngine.playBridgeCreak();
+        }
+      }
+    });
+
     // コヨーテタイム更新＆着地時の先行ジャンプ実行
     if (this.player.isGrounded) {
       this.player.coyoteTimer = 7;
@@ -1545,18 +1746,6 @@ class Game {
     if (this.isFever) {
       this.feverTimer--;
       this.feverGauge = (this.feverTimer / 480) * 100;
-      // フィーバー中は定期的にお茶会ご褒美の金平糖が前方空からふわりと出現！
-      if (this.feverTimer % 55 === 0 && this.feverTimer > 30) {
-        const dropX = this.player.worldX + 160 + Math.random() * 140;
-        const dropGroundY = this.getGroundYAt(dropX) || this.baseGroundY;
-        this.items.push({
-          x: dropX,
-          y: Math.max(220, dropGroundY - 120 - Math.random() * 90),
-          width: 32,
-          height: 32,
-          type: 'konpeito'
-        });
-      }
       if (this.feverTimer <= 0) this.endFever();
     }
 
@@ -1660,20 +1849,22 @@ class Game {
           enemy.satisfiedTime = Date.now();
           const pts = Math.round(500 * this.getComboMultiplier() * (this.isFever ? 2 : 1));
           this.score += pts;
-          if (!this.isFever) this.feverGauge = Math.min(100, this.feverGauge + 10);
+          if (!this.isFever) this.feverGauge = Math.min(100, this.feverGauge + 6);
           soundEngine.playEnemySatisfied();
           this.addFloatingText(enemy.x, enemy.y - 20, `🌸 美味しい！+${pts}`, '#ff69b4');
           this.addEffect(proj.x, proj.y, 'sparkle');
-          // 満足した敵から金平糖のお返しがポンッと飛び出す！
-          this.items.push({
-            x: enemy.x + enemy.width / 2 - 16,
-            y: enemy.y,
-            width: 32,
-            height: 32,
-            type: 'konpeito',
-            vx: proj.vx >= 0 ? 1.2 : -1.2,
-            vy: -6.5
-          });
+          // まれ（5%）に満足した敵から希少な金平糖のお返し！
+          if (Math.random() < 0.05) {
+            this.items.push({
+              x: enemy.x + enemy.width / 2 - 16,
+              y: enemy.y,
+              width: 32,
+              height: 32,
+              type: 'konpeito',
+              vx: proj.vx >= 0 ? 1.2 : -1.2,
+              vy: -6.5
+            });
+          }
           hit = true;
           break;
         }
@@ -1898,7 +2089,7 @@ class Game {
             this.player.canDoubleJump = this.player.hasDoubleJump; // 連続アクション用に2段ジャンプ回復
             const stompPts = (350 + (this.stompCombo - 1) * 150) * (this.isFever ? 2 : 1);
             this.score += stompPts;
-            if (!this.isFever) this.feverGauge = Math.min(100, this.feverGauge + 10);
+            if (!this.isFever) this.feverGauge = Math.min(100, this.feverGauge + 5);
             this.hitStopTimer = 2;
             this.triggerScreenShake(6, 3);
             soundEngine.playEnemySatisfied();
@@ -1924,7 +2115,7 @@ class Game {
             enemy.nearMissAwarded = true;
             const bonus = Math.round(150 * this.getComboMultiplier());
             this.score += bonus;
-            this.feverGauge = Math.min(100, this.feverGauge + 7);
+            this.feverGauge = Math.min(100, this.feverGauge + 5);
             if (this.feverGauge >= 100 && !this.isFever) {
               this.startFever();
             }
@@ -1943,6 +2134,8 @@ class Game {
     this.springs = this.springs.filter(s => s.x > this.cameraX - 400);
     this.terrainSegments = this.terrainSegments.filter(t => t.x + t.width > this.cameraX - 600);
     this.walls = this.walls.filter(w => w.x > this.cameraX - 400);
+    this.crumblingBridges = this.crumblingBridges.filter(b => b.x + b.width > this.cameraX - 400);
+    this.windZones = this.windZones.filter(z => z.x + z.width > this.cameraX - 400);
 
     // エフェクト更新（逆順ループでsplice安全処理）
     for (let idx = this.effects.length - 1; idx >= 0; idx--) {
@@ -1956,6 +2149,7 @@ class Game {
     uiManager.updateHUD({
       score: this.score,
       distance: this.distance,
+      envIcon: envState.icon,
       lives: this.lives,
       combo: this.combo,
       comboMultiplier: this.getComboMultiplier(),
@@ -1971,10 +2165,234 @@ class Game {
   }
 
   // =========================================================================
+  // 丸みのある美しい地形描画（坂道コサイン曲線・高台＆段差の角丸一体レンダリング）
+  // =========================================================================
+  renderTerrain(envState) {
+    const ctx = this.ctx;
+    const camX = this.cameraX;
+    const viewMinX = camX - 120;
+    const viewMaxX = camX + this.width + 120;
+
+    // 連続した陸地（非ギャップ）セグメントを塊（チャンク）にまとめる
+    const chunks = [];
+    let currentChunk = [];
+    for (let i = 0; i < this.terrainSegments.length; i++) {
+      const seg = this.terrainSegments[i];
+      if (seg.type === 'gap') {
+        if (currentChunk.length > 0) {
+          chunks.push(currentChunk);
+          currentChunk = [];
+        }
+      } else {
+        currentChunk.push(seg);
+      }
+    }
+    if (currentChunk.length > 0) chunks.push(currentChunk);
+
+    chunks.forEach(chunk => {
+      const chunkStart = chunk[0].x;
+      const chunkEnd = chunk[chunk.length - 1].x + chunk[chunk.length - 1].width;
+      if (chunkEnd < viewMinX || chunkStart > viewMaxX) return;
+
+      // チャンクの上面輪郭点列を構築（坂道は滑らかなコサイン曲線、段差・崖肩は丸角！）
+      const rawPoints = [];
+      for (let sIdx = 0; sIdx < chunk.length; sIdx++) {
+        const seg = chunk[sIdx];
+        const x0 = seg.x - camX;
+        const x1 = seg.x + seg.width - camX;
+
+        if (seg.type === 'slope_up' || seg.type === 'slope_down') {
+          const steps = Math.max(8, Math.ceil(seg.width / 12));
+          for (let k = 0; k <= steps; k++) {
+            const t = k / steps;
+            const smoothT = 0.5 - 0.5 * Math.cos(t * Math.PI);
+            const px = x0 + seg.width * t;
+            const py = seg.yFrom + (seg.yTo - seg.yFrom) * smoothT;
+            if (k === 0 && rawPoints.length > 0) {
+              const last = rawPoints[rawPoints.length - 1];
+              if (Math.abs(last.x - px) < 1 && Math.abs(last.y - py) < 1) continue;
+            }
+            rawPoints.push({ x: px, y: py, sharp: false });
+          }
+        } else {
+          // 平坦・高台・段差: コーナーを丸める対象として頂点を追加
+          const py = seg.y;
+          if (rawPoints.length === 0) {
+            rawPoints.push({ x: x0, y: py, sharp: true });
+          } else {
+            const prev = rawPoints[rawPoints.length - 1];
+            if (Math.abs(prev.y - py) > 2) {
+              // 段差の垂直壁もわずかに斜め＆丸角にして柔らかい土手・石段シルエットに
+              rawPoints.push({ x: x0, y: py, sharp: true });
+            }
+          }
+          rawPoints.push({ x: x1, y: py, sharp: true });
+        }
+      }
+
+      if (rawPoints.length < 2) return;
+
+      // 崖の左右端にも少し丸みをつけて自然な土手端を作る
+      const firstPt = rawPoints[0];
+      const lastPt = rawPoints[rawPoints.length - 1];
+      const cliffRadius = 15;
+
+      // 角丸付きの滑らかな上面パスを描くヘルパー
+      const traceTopContour = (offsetY = 0) => {
+        ctx.moveTo(firstPt.x, this.height + 10);
+        ctx.lineTo(firstPt.x, firstPt.y + offsetY + cliffRadius);
+        ctx.quadraticCurveTo(firstPt.x, firstPt.y + offsetY, Math.min(firstPt.x + cliffRadius, lastPt.x), firstPt.y + offsetY);
+
+        for (let i = 1; i < rawPoints.length - 1; i++) {
+          const prev = rawPoints[i - 1];
+          const curr = rawPoints[i];
+          const next = rawPoints[i + 1];
+
+          if (curr.sharp) {
+            const dx1 = curr.x - prev.x;
+            const dy1 = curr.y - prev.y;
+            const len1 = Math.hypot(dx1, dy1);
+            const dx2 = next.x - curr.x;
+            const dy2 = next.y - curr.y;
+            const len2 = Math.hypot(dx2, dy2);
+            const r = Math.min(16, len1 * 0.45, len2 * 0.45);
+            if (r > 1.5) {
+              const bx = curr.x - (dx1 / len1) * r;
+              const by = curr.y - (dy1 / len1) * r + offsetY;
+              const ax = curr.x + (dx2 / len2) * r;
+              const ay = curr.y + (dy2 / len2) * r + offsetY;
+              ctx.lineTo(bx, by);
+              ctx.quadraticCurveTo(curr.x, curr.y + offsetY, ax, ay);
+              continue;
+            }
+          }
+          ctx.lineTo(curr.x, curr.y + offsetY);
+        }
+
+        ctx.lineTo(Math.max(firstPt.x, lastPt.x - cliffRadius), lastPt.y + offsetY);
+        ctx.quadraticCurveTo(lastPt.x, lastPt.y + offsetY, lastPt.x, lastPt.y + offsetY + cliffRadius);
+        ctx.lineTo(lastPt.x, this.height + 10);
+      };
+
+      // 上面の草の帯だけを描くオープンパス（丸角反映）
+      const traceGrassCurve = (offsetY = 0) => {
+        ctx.moveTo(firstPt.x, firstPt.y + offsetY + cliffRadius * 0.85);
+        ctx.quadraticCurveTo(firstPt.x, firstPt.y + offsetY, Math.min(firstPt.x + cliffRadius, lastPt.x), firstPt.y + offsetY);
+
+        for (let i = 1; i < rawPoints.length - 1; i++) {
+          const prev = rawPoints[i - 1];
+          const curr = rawPoints[i];
+          const next = rawPoints[i + 1];
+
+          if (curr.sharp) {
+            const dx1 = curr.x - prev.x;
+            const dy1 = curr.y - prev.y;
+            const len1 = Math.hypot(dx1, dy1);
+            const dx2 = next.x - curr.x;
+            const dy2 = next.y - curr.y;
+            const len2 = Math.hypot(dx2, dy2);
+            const r = Math.min(16, len1 * 0.45, len2 * 0.45);
+            if (r > 1.5) {
+              const bx = curr.x - (dx1 / len1) * r;
+              const by = curr.y - (dy1 / len1) * r + offsetY;
+              const ax = curr.x + (dx2 / len2) * r;
+              const ay = curr.y + (dy2 / len2) * r + offsetY;
+              ctx.lineTo(bx, by);
+              ctx.quadraticCurveTo(curr.x, curr.y + offsetY, ax, ay);
+              continue;
+            }
+          }
+          ctx.lineTo(curr.x, curr.y + offsetY);
+        }
+
+        ctx.lineTo(Math.max(firstPt.x, lastPt.x - cliffRadius), lastPt.y + offsetY);
+        ctx.quadraticCurveTo(lastPt.x, lastPt.y + offsetY, lastPt.x, lastPt.y + offsetY + cliffRadius * 0.85);
+      };
+
+      ctx.save();
+
+      // 1. 表土の柔らかい層（全体シルエット）
+      const minY = Math.min(...rawPoints.map(p => p.y));
+      const earthGrad = ctx.createLinearGradient(0, minY, 0, this.height);
+      earthGrad.addColorStop(0, '#967754');
+      earthGrad.addColorStop(0.18, '#745434');
+      earthGrad.addColorStop(0.65, '#593d22');
+      earthGrad.addColorStop(1, '#3b2614');
+      ctx.fillStyle = earthGrad;
+      ctx.beginPath();
+      traceTopContour(0);
+      ctx.closePath();
+      ctx.fill();
+
+      // 2. 深層の土の層（上端から14px下に丸くオフセット）
+      ctx.fillStyle = 'rgba(72, 46, 24, 0.55)';
+      ctx.beginPath();
+      traceTopContour(14);
+      ctx.closePath();
+      ctx.fill();
+
+      // 3. ふっくら丸みのある草緑の縁取り（2層重ねで立体的＆柔らかく）
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      // 草の影
+      ctx.strokeStyle = '#3c5725';
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      traceGrassCurve(3);
+      ctx.stroke();
+
+      // メインの苔緑
+      ctx.strokeStyle = '#5c8239';
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      traceGrassCurve(1);
+      ctx.stroke();
+
+      // 若草ハイライト
+      ctx.strokeStyle = '#89b856';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      traceGrassCurve(-1);
+      ctx.stroke();
+
+      // 4. 地面の丸小石ディテール
+      ctx.fillStyle = 'rgba(182, 156, 122, 0.55)';
+      chunk.forEach(seg => {
+        const sX = seg.x - camX;
+        if (sX > this.width + 20 || sX + seg.width < -20) return;
+        for (let dx = 28; dx < seg.width - 20; dx += 68 + Math.sin(seg.x + dx) * 18) {
+          const stoneX = sX + dx;
+          if (stoneX > -10 && stoneX < this.width + 10) {
+            const gy = this.getGroundYAt(seg.x + dx);
+            if (gy !== null) {
+              ctx.beginPath();
+              ctx.ellipse(stoneX, gy + 18, 5, 2.6, 0, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+      });
+
+      // 5. 夜間のほのかな暗み馴染ませ
+      if (envState && envState.nightWeight > 0.05) {
+        ctx.fillStyle = `rgba(12, 16, 40, ${0.32 * envState.nightWeight})`;
+        ctx.beginPath();
+        traceTopContour(0);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.restore();
+    });
+  }
+
+  // =========================================================================
   // レンダリング (Render)
   // =========================================================================
   render() {
     this.ctx.clearRect(0, 0, this.width, this.height);
+    const envState = this.getEnvironmentState();
 
     // 画面シェイク（踏みつけ・被弾・大跳躍の手応え演出）
     this.ctx.save();
@@ -1984,86 +2402,36 @@ class Game {
       this.ctx.translate(sx, sy);
     }
 
-    // 1. 背景パララックス描画（カメラ位置に応じてスクロール）
-    spriteManager.renderBackground(this.ctx, this.cameraX, this.width, this.height, this.isFever);
+    // 1. 背景パララックス描画（時間帯・天候変化連動）
+    spriteManager.renderBackground(this.ctx, this.cameraX, this.width, this.height, this.isFever, envState);
 
-    // 2. 地形セグメント（地面の高低差）描画
-    this.terrainSegments.forEach(seg => {
-      if (seg.type === 'gap') return; // 穴は描画しない
-      const sX = seg.x - this.cameraX;
-      if (sX > this.width + 50 || sX + seg.width < -50) return; // 画面外スキップ
+    // 1b. 春一番の追い風ゾーン（背景寄りレイヤーに描画）
+    this.windZones.forEach(zone => {
+      const zX = zone.x - this.cameraX;
+      if (zX > this.width + 50 || zX + zone.width < -50) return;
+      spriteManager.renderWindZone(this.ctx, {
+        x: zX,
+        y: zone.y,
+        width: zone.width,
+        height: zone.height
+      });
+    });
 
-      this.ctx.save();
+    // 2. 丸みのある地形（坂道・高台・段差）描画
+    this.renderTerrain(envState);
 
-      if (seg.type === 'slope_up' || seg.type === 'slope_down') {
-        // 坂道の描画
-        const topLeftY = seg.yFrom;
-        const topRightY = seg.yTo;
-        // 地面の表面
-        this.ctx.fillStyle = '#8B7355';
-        this.ctx.beginPath();
-        this.ctx.moveTo(sX, topLeftY);
-        this.ctx.lineTo(sX + seg.width, topRightY);
-        this.ctx.lineTo(sX + seg.width, this.height);
-        this.ctx.lineTo(sX, this.height);
-        this.ctx.closePath();
-        this.ctx.fill();
-
-        // 土の層
-        this.ctx.fillStyle = '#6B4E2E';
-        this.ctx.beginPath();
-        this.ctx.moveTo(sX, topLeftY + 12);
-        this.ctx.lineTo(sX + seg.width, topRightY + 12);
-        this.ctx.lineTo(sX + seg.width, this.height);
-        this.ctx.lineTo(sX, this.height);
-        this.ctx.closePath();
-        this.ctx.fill();
-
-        // 草の線
-        this.ctx.strokeStyle = '#5A7A3A';
-        this.ctx.lineWidth = 3;
-        this.ctx.beginPath();
-        this.ctx.moveTo(sX, topLeftY);
-        this.ctx.lineTo(sX + seg.width, topRightY);
-        this.ctx.stroke();
-      } else {
-        // 平坦・高台・低地の描画
-        const topY = seg.y;
-
-        // 地面の表面（土色の層）
-        this.ctx.fillStyle = '#8B7355';
-        this.ctx.fillRect(sX, topY, seg.width, 12);
-
-        // 土の層
-        this.ctx.fillStyle = '#6B4E2E';
-        this.ctx.fillRect(sX, topY + 12, seg.width, this.height - topY - 12);
-
-        // 段差がある場合の側面を描画
-        if (seg.type === 'raised') {
-          this.ctx.fillStyle = '#5A4128';
-          this.ctx.fillRect(sX, topY, 3, this.height - topY);
-        }
-
-        // 草の線
-        this.ctx.strokeStyle = '#5A7A3A';
-        this.ctx.lineWidth = 3;
-        this.ctx.beginPath();
-        this.ctx.moveTo(sX, topY);
-        this.ctx.lineTo(sX + seg.width, topY);
-        this.ctx.stroke();
-
-        // 地面の装飾（小石・草のディテール）
-        this.ctx.fillStyle = '#A89070';
-        for (let dx = 20; dx < seg.width - 10; dx += 60 + Math.sin(seg.x + dx) * 20) {
-          const stoneX = sX + dx;
-          if (stoneX > -10 && stoneX < this.width + 10) {
-            this.ctx.beginPath();
-            this.ctx.ellipse(stoneX, topY + 6, 4, 2, 0, 0, Math.PI * 2);
-            this.ctx.fill();
-          }
-        }
-      }
-      this.ctx.restore();
+    // 2a. 季節ギミック: 崩れる古橋の描画
+    this.crumblingBridges.forEach(bridge => {
+      const bX = bridge.x - this.cameraX;
+      if (bX > this.width + 60 || bX + bridge.width < -60) return;
+      spriteManager.renderCrumblingBridge(this.ctx, {
+        x: bX,
+        y: bridge.y,
+        width: bridge.width,
+        height: bridge.height,
+        state: bridge.state,
+        fallDistance: bridge.fallDistance
+      });
     });
 
     // 2b. 壁型障害物（石垣）の描画
@@ -2197,9 +2565,9 @@ class Game {
       vy: this.player.vy
     });
 
-    // 9. 桜の花びらパーティクル（風になびく速度はプレイヤーの移動速度にも連動）
+    // 9. 桜の花びら＆天候（ホタル・春雨）パーティクル
     const petalSpeed = (this.isFever ? 2.5 : 1.0) + Math.abs(this.player.vx) * 0.15;
-    spriteManager.renderPetals(this.ctx, this.width, this.height, petalSpeed);
+    spriteManager.renderPetals(this.ctx, this.width, this.height, petalSpeed, envState, this.player.inWindZone);
 
     // 10. フローティングテキスト＆エフェクト
     this.effects.forEach(eff => {

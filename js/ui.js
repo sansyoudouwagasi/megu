@@ -135,10 +135,11 @@ class UIManager {
     // スコア
     this.hudScore.textContent = gameState.score.toLocaleString();
 
-    // 距離・宿場町
+    // 距離・宿場町（現在の時間帯・天候アイコン付き）
     const distM = Math.floor(gameState.distance);
     const station = this.getCurrentStation(distM);
-    this.hudDistance.textContent = `${station} ${distM}m`;
+    const envIcon = gameState.envIcon ? `${gameState.envIcon} ` : '';
+    this.hudDistance.textContent = `${envIcon}${station} ${distM}m`;
 
     // ライフ更新（残り1の時はドキドキ鼓動アニメーション）
     const icons = this.hudLivesContainer.children;

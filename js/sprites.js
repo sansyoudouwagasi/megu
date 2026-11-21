@@ -80,6 +80,43 @@ class SpriteManager {
         opacity: 0.4 + Math.random() * 0.5
       });
     }
+
+    // 夜桜のホタル（光粒）パーティクル
+    this.fireflies = [];
+    for (let i = 0; i < 22; i++) {
+      this.fireflies.push({
+        x: Math.random() * 480,
+        y: 180 + Math.random() * 480,
+        phase: Math.random() * Math.PI * 2,
+        speedX: (Math.random() - 0.5) * 0.45,
+        speedY: (Math.random() - 0.5) * 0.35,
+        radius: 2 + Math.random() * 2.5
+      });
+    }
+
+    // 春雨（しとしと雨粒）パーティクル
+    this.raindrops = [];
+    for (let i = 0; i < 55; i++) {
+      this.raindrops.push({
+        x: Math.random() * 500,
+        y: Math.random() * 800,
+        length: 12 + Math.random() * 12,
+        speedY: 9 + Math.random() * 5,
+        speedX: -2.2 - Math.random() * 1.2,
+        opacity: 0.28 + Math.random() * 0.32
+      });
+    }
+
+    // 夜空の星（固定シード配置）
+    this.stars = [];
+    for (let i = 0; i < 32; i++) {
+      this.stars.push({
+        x: (i * 73 + 29) % 450,
+        y: 25 + ((i * 53 + 17) % 260),
+        size: 1 + (i % 3) * 0.6,
+        twinkleOffset: i * 0.9
+      });
+    }
   }
 
   // アセットの非同期プリロード
@@ -112,9 +149,9 @@ class SpriteManager {
   }
 
   // =========================================================================
-  // 背景パララックス描画
+  // 背景パララックス描画（時間帯・天候変化：春の昼 → 夕焼け → 夜桜提灯 → 春雨）
   // =========================================================================
-  renderBackground(ctx, cameraX, width, height, isFever = false) {
+  renderBackground(ctx, cameraX, width, height, isFever = false, env = null) {
     const bgImg = this.images['gameBg'];
     if (bgImg && bgImg.complete && bgImg.naturalWidth > 0) {
       // プレイ背景（パララックススクロール）
@@ -141,22 +178,125 @@ class SpriteManager {
       ctx.fillRect(0, 0, width, height);
     }
 
+    // 時間帯・天候オーバーレイ（夕焼け・夜桜・春雨）
+    if (env) {
+      const { sunsetWeight = 0, nightWeight = 0, rainWeight = 0 } = env;
+
+      // 1. 夕焼け（茜色〜琥珀色のグラデーション）
+      if (sunsetWeight > 0.01) {
+        ctx.save();
+        const sGrad = ctx.createLinearGradient(0, 0, 0, height);
+        sGrad.addColorStop(0, `rgba(180, 52, 48, ${0.42 * sunsetWeight})`);
+        sGrad.addColorStop(0.45, `rgba(255, 132, 58, ${0.34 * sunsetWeight})`);
+        sGrad.addColorStop(1, `rgba(255, 198, 110, ${0.18 * sunsetWeight})`);
+        ctx.fillStyle = sGrad;
+        ctx.fillRect(0, 0, width, height);
+        ctx.restore();
+      }
+
+      // 2. 夜桜と提灯（藍色の夜空＋星＋三日月＋沿道の提灯ぼんぼり）
+      if (nightWeight > 0.01) {
+        ctx.save();
+        const nGrad = ctx.createLinearGradient(0, 0, 0, height);
+        nGrad.addColorStop(0, `rgba(10, 16, 48, ${0.68 * nightWeight})`);
+        nGrad.addColorStop(0.55, `rgba(22, 26, 68, ${0.56 * nightWeight})`);
+        nGrad.addColorStop(1, `rgba(38, 28, 56, ${0.45 * nightWeight})`);
+        ctx.fillStyle = nGrad;
+        ctx.fillRect(0, 0, width, height);
+
+        // 瞬く星空
+        const now = Date.now() * 0.003;
+        this.stars.forEach(s => {
+          const twinkle = 0.45 + 0.55 * Math.sin(now + s.twinkleOffset);
+          ctx.fillStyle = `rgba(255, 248, 215, ${twinkle * nightWeight * 0.85})`;
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        // 柔らかな満月
+        const moonX = width - 78;
+        const moonY = 128;
+        const moonGlow = ctx.createRadialGradient(moonX, moonY, 8, moonX, moonY, 54);
+        moonGlow.addColorStop(0, `rgba(255, 246, 200, ${0.55 * nightWeight})`);
+        moonGlow.addColorStop(1, 'rgba(255, 246, 200, 0)');
+        ctx.fillStyle = moonGlow;
+        ctx.beginPath();
+        ctx.arc(moonX, moonY, 54, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(255, 248, 218, ${0.9 * nightWeight})`;
+        ctx.beginPath();
+        ctx.arc(moonX, moonY, 18, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 街道沿いの提灯（パララックス連動で背景にほのかに灯る）
+        const lanternSpacing = 175;
+        const lanternOffset = -(cameraX * 0.55) % lanternSpacing;
+        for (let lx = lanternOffset - lanternSpacing; lx < width + lanternSpacing; lx += lanternSpacing) {
+          const ly = 545 + Math.sin(lx * 0.02) * 8;
+          // 提灯の温かい光輪
+          const lGlow = ctx.createRadialGradient(lx, ly, 4, lx, ly, 46);
+          lGlow.addColorStop(0, `rgba(255, 190, 95, ${0.5 * nightWeight})`);
+          lGlow.addColorStop(0.5, `rgba(255, 130, 80, ${0.2 * nightWeight})`);
+          lGlow.addColorStop(1, 'rgba(255, 130, 80, 0)');
+          ctx.fillStyle = lGlow;
+          ctx.beginPath();
+          ctx.arc(lx, ly, 46, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 提灯の支柱と本体
+          ctx.strokeStyle = `rgba(50, 32, 22, ${0.75 * nightWeight})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(lx, ly + 12);
+          ctx.lineTo(lx, height);
+          ctx.stroke();
+
+          ctx.fillStyle = `rgba(255, 210, 145, ${0.92 * nightWeight})`;
+          ctx.strokeStyle = `rgba(180, 52, 42, ${0.9 * nightWeight})`;
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.ellipse(lx, ly, 9, 13, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // 3. 春雨の朝霧（しっとり薄青の霧オーバーレイ）
+      if (rainWeight > 0.01) {
+        ctx.save();
+        const rGrad = ctx.createLinearGradient(0, 0, 0, height);
+        rGrad.addColorStop(0, `rgba(58, 86, 118, ${0.38 * rainWeight})`);
+        rGrad.addColorStop(0.6, `rgba(110, 142, 165, ${0.24 * rainWeight})`);
+        rGrad.addColorStop(1, `rgba(175, 200, 215, ${0.22 * rainWeight})`);
+        ctx.fillStyle = rGrad;
+        ctx.fillRect(0, 0, width, height);
+        ctx.restore();
+      }
+    }
+
     // フィーバー時の華やかな桜色オーバーレイ
     if (isFever) {
-      ctx.fillStyle = 'rgba(255, 105, 180, 0.15)';
+      ctx.fillStyle = 'rgba(255, 105, 180, 0.16)';
       ctx.fillRect(0, 0, width, height);
     }
   }
 
   // =========================================================================
-  // 桜の花びらパーティクル描画
+  // 桜の花びら＆天候（ホタル・春雨）パーティクル描画
   // =========================================================================
-  renderPetals(ctx, width, height, speedMultiplier = 1.0) {
+  renderPetals(ctx, width, height, speedMultiplier = 1.0, env = null, inWindZone = false) {
+    const nightWeight = env ? (env.nightWeight || 0) : 0;
+    const rainWeight = env ? (env.rainWeight || 0) : 0;
+
+    // 1. 桜の花びら（追い風ゾーン中は一気に右へ吹き抜ける！）
     ctx.save();
     this.petals.forEach(p => {
-      p.x += p.speedX * speedMultiplier;
-      p.y += p.speedY * speedMultiplier;
-      p.angle += p.angularSpeed;
+      const vxBoost = inWindZone ? 5.5 : 0;
+      p.x += p.speedX * speedMultiplier + vxBoost;
+      p.y += p.speedY * (inWindZone ? 0.5 : speedMultiplier);
+      p.angle += p.angularSpeed * (inWindZone ? 2.5 : 1);
 
       if (p.y > height + 20) {
         p.y = -20;
@@ -164,14 +304,17 @@ class SpriteManager {
       }
       if (p.x > width + 20) {
         p.x = -20;
+        p.y = Math.random() * height;
       }
 
       ctx.translate(p.x, p.y);
       ctx.rotate(p.angle);
 
-      ctx.fillStyle = `rgba(255, 183, 197, ${p.opacity})`;
+      const alpha = p.opacity * (1 - rainWeight * 0.45);
+      ctx.fillStyle = nightWeight > 0.4
+        ? `rgba(255, 210, 225, ${alpha})`
+        : `rgba(255, 183, 197, ${alpha})`;
       ctx.beginPath();
-      // 花びらの形（楕円）
       ctx.ellipse(0, 0, p.size, p.size * 0.55, 0, 0, Math.PI * 2);
       ctx.fill();
 
@@ -179,6 +322,55 @@ class SpriteManager {
       ctx.translate(-p.x, -p.y);
     });
     ctx.restore();
+
+    // 2. 夜桜のホタル（夜間にふわふわ輝く金色の光粒）
+    if (nightWeight > 0.15) {
+      ctx.save();
+      this.fireflies.forEach(f => {
+        f.phase += 0.055;
+        f.x += f.speedX + Math.sin(f.phase * 0.7) * 0.35;
+        f.y += f.speedY + Math.cos(f.phase * 0.6) * 0.25;
+        if (f.x < -15) f.x = width + 15;
+        if (f.x > width + 15) f.x = -15;
+        if (f.y < 140) f.y = height - 120;
+        if (f.y > height - 100) f.y = 160;
+
+        const glowAlpha = (0.35 + 0.65 * (0.5 + 0.5 * Math.sin(f.phase))) * nightWeight;
+        const grad = ctx.createRadialGradient(f.x, f.y, 0.5, f.x, f.y, f.radius * 4);
+        grad.addColorStop(0, `rgba(255, 250, 175, ${glowAlpha})`);
+        grad.addColorStop(0.5, `rgba(220, 255, 130, ${glowAlpha * 0.45})`);
+        grad.addColorStop(1, 'rgba(220, 255, 130, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.radius * 4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
+    }
+
+    // 3. 春雨（しとしと斜めに降る銀色の雨粒）
+    if (rainWeight > 0.1) {
+      ctx.save();
+      ctx.lineCap = 'round';
+      this.raindrops.forEach(r => {
+        r.x += r.speedX + (inWindZone ? 5.0 : 0);
+        r.y += r.speedY;
+        if (r.y > height + 20) {
+          r.y = -20;
+          r.x = Math.random() * (width + 80);
+        }
+        if (r.x < -20) r.x = width + 20;
+        if (r.x > width + 40) r.x = -10;
+
+        ctx.strokeStyle = `rgba(215, 238, 255, ${r.opacity * rainWeight})`;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(r.x, r.y);
+        ctx.lineTo(r.x + (inWindZone ? 6 : -3), r.y + r.length);
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
   }
 
   // =========================================================================
@@ -699,6 +891,134 @@ class SpriteManager {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(type === 'crow' ? '鴉!' : '樽!', 0, 1);
+
+    ctx.restore();
+  }
+
+  // =========================================================================
+  // 季節のギミック1: 崩れる古橋（古びた木橋・乗ると揺れて崩落！）描画
+  // =========================================================================
+  renderCrumblingBridge(ctx, bridge) {
+    if (bridge.state === 'broken') return;
+
+    const shakeX = bridge.state === 'shaking' ? (Math.random() - 0.5) * 5.5 : 0;
+    const shakeY = bridge.state === 'shaking' ? (Math.random() - 0.5) * 3.0 : 0;
+    const bx = bridge.x + shakeX;
+    const by = bridge.y + shakeY;
+    const { width, height } = bridge;
+
+    ctx.save();
+    if (bridge.state === 'falling') {
+      ctx.globalAlpha = Math.max(0.15, 1 - (bridge.fallDistance || 0) / 160);
+    }
+
+    // 橋下の丸い木梁（アーチ状にわずかに反った太鼓橋風）
+    ctx.strokeStyle = '#4a311e';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(bx + 6, by + height + 3);
+    ctx.quadraticCurveTo(bx + width / 2, by + height - 6, bx + width - 6, by + height + 3);
+    ctx.stroke();
+
+    // 踏み板（年季の入った木の板を並べて表現）
+    const plankCount = Math.max(4, Math.floor(width / 18));
+    const plankW = width / plankCount;
+    for (let i = 0; i < plankCount; i++) {
+      const px = bx + i * plankW;
+      const crackDrop = (bridge.state === 'shaking' && i % 2 === 1) ? 2 : 0;
+      const grad = ctx.createLinearGradient(px, by, px, by + height);
+      grad.addColorStop(0, bridge.state === 'shaking' ? '#b8834d' : '#9c6e42');
+      grad.addColorStop(1, '#5a3a1e');
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.roundRect(px + 1, by + crackDrop, plankW - 2, height, 4);
+      ctx.fill();
+
+      ctx.strokeStyle = '#3b2412';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      // 古びた縄の結び目（両端と中央）
+      if (i === 0 || i === plankCount - 1 || i === Math.floor(plankCount / 2)) {
+        ctx.strokeStyle = '#d4b483';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(px + plankW * 0.5, by);
+        ctx.lineTo(px + plankW * 0.5, by + height);
+        ctx.stroke();
+      }
+    }
+
+    // ぐらつき中は上部に警告のヒビ＆砂埃サイン
+    if (bridge.state === 'shaking') {
+      ctx.font = 'bold 12px "Zen Maru Gothic", sans-serif';
+      ctx.fillStyle = '#ffe082';
+      ctx.strokeStyle = '#3b1e08';
+      ctx.lineWidth = 2.5;
+      ctx.textAlign = 'center';
+      ctx.strokeText('グラッ!', bx + width / 2, by - 7);
+      ctx.fillText('グラッ!', bx + width / 2, by - 7);
+    }
+
+    ctx.restore();
+  }
+
+  // =========================================================================
+  // 季節のギミック2: 春一番の追い風ゾーン（桜吹雪の突風エリア）描画
+  // =========================================================================
+  renderWindZone(ctx, zone) {
+    const { x, y, width, height } = zone;
+    const t = Date.now() * 0.006;
+
+    ctx.save();
+
+    // 淡く爽やかな追い風エアカーテン
+    const grad = ctx.createLinearGradient(x, y, x + width, y);
+    grad.addColorStop(0, 'rgba(255, 220, 232, 0.02)');
+    grad.addColorStop(0.2, 'rgba(255, 232, 240, 0.16)');
+    grad.addColorStop(0.8, 'rgba(255, 232, 240, 0.16)');
+    grad.addColorStop(1, 'rgba(255, 220, 232, 0.02)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(x, y, width, height, 18);
+    ctx.fill();
+
+    // 右向きに勢いよく流れる風の流線（ストリームライン）
+    ctx.lineCap = 'round';
+    for (let row = 0; row < 5; row++) {
+      const lineY = y + 26 + row * ((height - 50) / 4);
+      const speed = 110 + (row % 3) * 35;
+      const offset = ((t * speed + row * 70) % (width + 60)) - 40;
+      const segStartX = Math.max(x + 8, x + offset);
+      const segEndX = Math.min(x + width - 8, x + offset + 58);
+
+      if (segEndX > segStartX + 8) {
+        const waveY = Math.sin(t * 2 + row) * 4;
+        ctx.strokeStyle = row % 2 === 0 ? 'rgba(255, 255, 255, 0.55)' : 'rgba(255, 183, 197, 0.65)';
+        ctx.lineWidth = row % 2 === 0 ? 2.4 : 1.8;
+        ctx.beginPath();
+        ctx.moveTo(segStartX, lineY + waveY);
+        ctx.quadraticCurveTo((segStartX + segEndX) / 2, lineY - waveY, segEndX, lineY + waveY * 0.5);
+        ctx.stroke();
+
+        // 流線の先端に小さな風矢印
+        ctx.beginPath();
+        ctx.moveTo(segEndX - 5, lineY + waveY * 0.5 - 3.5);
+        ctx.lineTo(segEndX, lineY + waveY * 0.5);
+        ctx.lineTo(segEndX - 5, lineY + waveY * 0.5 + 3.5);
+        ctx.stroke();
+      }
+    }
+
+    // ゾーン入口上部の小さな和風ラベル
+    ctx.font = 'bold 11px "Zen Maru Gothic", sans-serif';
+    ctx.fillStyle = 'rgba(255, 245, 250, 0.9)';
+    ctx.strokeStyle = 'rgba(130, 45, 70, 0.75)';
+    ctx.lineWidth = 2.5;
+    ctx.textAlign = 'center';
+    ctx.strokeText('🌬️ 春一番 追い風 >>>', x + width / 2, y + 14);
+    ctx.fillText('🌬️ 春一番 追い風 >>>', x + width / 2, y + 14);
 
     ctx.restore();
   }

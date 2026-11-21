@@ -353,6 +353,80 @@ class SoundEngine {
     });
   }
 
+  // 古橋のきしみ音 (ギシッ…カタカタ)
+  playBridgeCreak() {
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    [0, 0.09].forEach((offset, idx) => {
+      const t = now + offset;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(idx === 0 ? 190 : 155, t);
+      osc.frequency.exponentialRampToValueAtTime(idx === 0 ? 115 : 95, t + 0.07);
+
+      gain.gain.setValueAtTime(0.22, t);
+      gain.gain.exponentialRampToValueAtTime(0.005, t + 0.08);
+
+      osc.connect(gain);
+      gain.connect(this.seGain);
+      osc.start(t);
+      osc.stop(t + 0.09);
+    });
+  }
+
+  // 古橋の崩落音 (バキッ・ゴトン)
+  playBridgeBreak() {
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(140, now);
+    osc.frequency.exponentialRampToValueAtTime(38, now + 0.24);
+
+    gain.gain.setValueAtTime(0.38, now);
+    gain.gain.exponentialRampToValueAtTime(0.005, now + 0.26);
+
+    osc.connect(gain);
+    gain.connect(this.seGain);
+    osc.start(now);
+    osc.stop(now + 0.27);
+  }
+
+  // 春一番の追い風音 (ヒューッ♪ 爽快な風切り音)
+  playWindGust() {
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    // ホワイトノイズをバンドパスで爽やかな風音に合成
+    const bufferSize = Math.floor(this.ctx.sampleRate * 0.35);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(520, now);
+    filter.frequency.exponentialRampToValueAtTime(1400, now + 0.18);
+    filter.frequency.exponentialRampToValueAtTime(700, now + 0.34);
+    filter.Q.value = 2.5;
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.01, now);
+    gain.gain.linearRampToValueAtTime(0.45, now + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.005, now + 0.35);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.seGain);
+    noise.start(now);
+    noise.stop(now + 0.36);
+  }
+
   // お茶会フィーバー突入音 (拍子木＋ドラ風の華やかな響き)
   playFeverStart() {
     if (!this.ctx || this.isMuted) return;
