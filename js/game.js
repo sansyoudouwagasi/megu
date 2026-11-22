@@ -1324,25 +1324,54 @@ class Game {
     }
   }
 
-  gameOver() {
+  gameOver(reason = 'damage') {
     if (this.state === 'GAMEOVER') return;
     this.state = 'GAMEOVER';
+    this.gameOverReason = reason;
     this.gameOverTimer = 0;
+    this.lives = 0;
     this.player.state = 'defeat';
-    this.player.vy = -7.5;
-    this.player.vx = this.player.facingRight ? -1.0 : 1.0;
+    this.player.vy = reason === 'fall' ? -12.0 : -7.5;
+    this.player.vx = reason === 'fall' ? 0 : (this.player.facingRight ? -1.0 : 1.0);
     this.player.invincible = false;
     this.player.hasDash = false;
     this.player.hasShield = false;
+    this.player.springBoostTimer = 0;
+    this.player.windBoostTimer = 0;
+
+    if (reason === 'fall') {
+      this.triggerScreenShake(12, 5);
+    }
 
     soundEngine.stopBGM();
     soundEngine.playGameOver();
 
-    this.addFloatingText(this.player.worldX + this.player.width / 2, this.player.y - 25, '💤 おやすみ女将さん...', '#ffb7c5');
+    const textY = reason === 'fall' ? Math.min(this.player.y - 25, this.height - 150) : this.player.y - 25;
+    const msg = reason === 'fall' ? '💦 あっ！穴に落ちちゃった…！' : '💤 おやすみ女将さん...';
+    this.addFloatingText(this.player.worldX + this.player.width / 2, textY, msg, '#ffb7c5');
 
     for (let i = 0; i < 8; i++) {
-      this.addEffect(this.player.worldX + (Math.random() - 0.5) * 50, this.player.y + (Math.random() - 0.5) * 30, 'sparkle');
+      this.addEffect(this.player.worldX + (Math.random() - 0.5) * 50, textY + 20 + (Math.random() - 0.5) * 30, 'sparkle');
     }
+
+    // HUDの体力表示を即座に0へ反映
+    const envState = this.getEnvironmentState();
+    uiManager.updateHUD({
+      score: this.score,
+      distance: this.distance,
+      envIcon: envState.icon,
+      lives: 0,
+      combo: 0,
+      comboMultiplier: 1,
+      feverGauge: this.feverGauge,
+      isFever: false,
+      hasDash: false,
+      dashTimer: 0,
+      hasShield: false,
+      hasDoubleJump: this.player.hasDoubleJump,
+      floatTimer: 0,
+      sakuramochiStock: this.player.sakuramochiStock
+    });
   }
 
   addFloatingText(worldX, y, text, color = '#ffffff') {
@@ -1376,38 +1405,47 @@ class Game {
       if (this.state === 'GAMEOVER') {
         this.gameOverTimer = (this.gameOverTimer || 0) + 1;
 
+        // 画面シェイク減衰（ゲームオーバー中も自然に収束）
+        if (this.shakeTimer > 0) {
+          this.shakeTimer--;
+          if (this.shakeTimer <= 0) this.shakeMagnitude = 0;
+        }
+
         // 女将さんのダウン物理
         this.player.vy += 0.5;
         this.player.y += this.player.vy;
         this.player.worldX += this.player.vx;
         this.player.vx *= 0.92;
 
-        const groundY = this.getGroundYAt(this.player.worldX + this.player.width / 2) || this.baseGroundY;
-        const targetGroundY = groundY - this.player.height + 15;
+        if (this.gameOverReason !== 'fall') {
+          const groundY = this.getGroundYAt(this.player.worldX + this.player.width / 2) || this.baseGroundY;
+          const targetGroundY = groundY - this.player.height + 15;
 
-        if (this.player.y >= targetGroundY) {
-          if (this.player.vy > 2.0) {
-            // 初回着地時の土煙・きらめき
-            for (let i = 0; i < 6; i++) {
-              this.addEffect(this.player.worldX + this.player.width / 2 + (Math.random() - 0.5) * 30, groundY - 5, 'sparkle');
+          if (this.player.y >= targetGroundY) {
+            if (this.player.vy > 2.0) {
+              // 初回着地時の土煙・きらめき
+              for (let i = 0; i < 6; i++) {
+                this.addEffect(this.player.worldX + this.player.width / 2 + (Math.random() - 0.5) * 30, groundY - 5, 'sparkle');
+              }
             }
+            this.player.y = targetGroundY;
+            this.player.vy = 0;
+            this.player.vx = 0;
           }
-          this.player.y = targetGroundY;
-          this.player.vy = 0;
-          this.player.vx = 0;
-        }
 
-        // 定期的に頭上から「💤」がふわふわ浮遊
-        if (this.gameOverTimer % 24 === 0 && this.gameOverTimer < 115) {
-          this.addEffect(
-            this.player.worldX + (this.player.facingRight ? this.player.width * 0.25 : this.player.width * 0.75),
-            this.player.y - 8,
-            'sleep'
-          );
+          // 定期的に頭上から「💤」がふわふわ浮遊
+          if (this.gameOverTimer % 24 === 0 && this.gameOverTimer < 115) {
+            this.addEffect(
+              this.player.worldX + (this.player.facingRight ? this.player.width * 0.25 : this.player.width * 0.75),
+              this.player.y - 8,
+              'sleep'
+            );
+          }
         }
 
         // エフェクト更新（ゲームオーバー中もアニメーションを維持）
-        this.effects.forEach((eff, idx) => {
+        for (let idx = this.effects.length - 1; idx >= 0; idx--) {
+          const eff = this.effects[idx];
           eff.life--;
           if (eff.type === 'text' || eff.type === 'sleep' || eff.type === 'sparkle') {
             eff.y -= (eff.type === 'sleep' ? 1.0 : 0.8);
@@ -1416,7 +1454,7 @@ class Game {
             }
           }
           if (eff.life <= 0) this.effects.splice(idx, 1);
-        });
+        }
 
         // 演出完了後にリザルト画面表示（約2.3秒 / 140フレーム後）
         if (this.gameOverTimer === 140) {
@@ -1614,16 +1652,10 @@ class Game {
     const localGround = this.getGroundYAt(playerCenterX);
 
     if (localGround === null) {
-      // 穴の上: 地面なし → 落下し続ける
-      // 画面外まで落下したら最後に安全だった地面へ確実に復帰（連続落下防止）
-      if (this.player.y > this.baseGroundY + 100) {
-        this.player.worldX = this.player.lastSafeX;
-        this.player.y = this.player.lastSafeY - 12;
-        this.player.vy = 0;
-        this.player.vx = 0;
-        this.player.springBoostTimer = 0;
-        this.player.isGrounded = false;
-        this.takeDamage();
+      // 穴の上: 地面なし → 画面下まで落ちたらライフ残数にかかわらず即ゲームオーバー！
+      if (this.player.y > this.baseGroundY + 95) {
+        this.gameOver('fall');
+        return;
       }
     } else {
       // 通常の地面判定
@@ -2635,7 +2667,9 @@ class Game {
       this.ctx.save();
       // 周辺減光（ヴィネット暗転）
       const pScreenX = this.player.worldX - this.cameraX + this.player.width / 2;
-      const pScreenY = this.player.y + this.player.height / 2;
+      const pScreenY = this.gameOverReason === 'fall'
+        ? Math.min(this.height * 0.7, this.player.y + this.player.height / 2)
+        : this.player.y + this.player.height / 2;
       const grad = this.ctx.createRadialGradient(
         pScreenX, pScreenY, 30,
         pScreenX, pScreenY, Math.max(this.width, this.height) * 0.8
@@ -2646,8 +2680,8 @@ class Game {
       this.ctx.fillStyle = grad;
       this.ctx.fillRect(0, 0, this.width, this.height);
 
-      // 女将さんの真上にスポットライト風の柔らかな光
-      if (progress > 0.3) {
+      // 女将さんの真上にスポットライト風の柔らかな光（地上ダウン時）
+      if (progress > 0.3 && this.gameOverReason !== 'fall') {
         const spotAlpha = (progress - 0.3) * 0.4;
         const spotGrad = this.ctx.createRadialGradient(pScreenX, pScreenY, 5, pScreenX, pScreenY, 80);
         spotGrad.addColorStop(0, `rgba(255, 245, 200, ${spotAlpha})`);
@@ -2667,15 +2701,17 @@ class Game {
         this.ctx.fillStyle = '#ffdf9e';
         this.ctx.strokeStyle = '#2b1d0c';
         this.ctx.lineWidth = 6;
-        this.ctx.strokeText('無念... おやすみ女将さん', this.width / 2, 220);
-        this.ctx.fillText('無念... おやすみ女将さん', this.width / 2, 220);
+        const mainText = this.gameOverReason === 'fall' ? '無念... 谷底へ落下！' : '無念... おやすみ女将さん';
+        const subText = this.gameOverReason === 'fall' ? '💦 足元にご用心 💦' : '🌸 街道の旅は一休み 🌸';
+        this.ctx.strokeText(mainText, this.width / 2, 220);
+        this.ctx.fillText(mainText, this.width / 2, 220);
 
         this.ctx.font = 'bold 15px "Zen Maru Gothic", sans-serif';
         this.ctx.fillStyle = '#ffccd5';
         this.ctx.strokeStyle = '#000000';
         this.ctx.lineWidth = 3;
-        this.ctx.strokeText('🌸 街道の旅は一休み 🌸', this.width / 2, 255);
-        this.ctx.fillText('🌸 街道の旅は一休み 🌸', this.width / 2, 255);
+        this.ctx.strokeText(subText, this.width / 2, 255);
+        this.ctx.fillText(subText, this.width / 2, 255);
       }
       this.ctx.restore();
     }
